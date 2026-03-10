@@ -21,6 +21,8 @@ object StatusParser {
         val eventsBuffered: Int = 0,
         val tier2: Boolean = false,
         val loggingNrs: List<Int> = emptyList(),
+        val nrCount: Int = 0,
+        val nrList: List<Int> = emptyList(),
         val hooks: List<HookInfo> = emptyList(),
         val error: String = ""
     )
@@ -32,11 +34,14 @@ object StatusParser {
     )
 
     data class SvcEvent(
+        val seq: Long = 0,
         val nr: Int,
         val name: String,
         val pid: Int,
         val uid: Int,
         val comm: String,
+        val pc: Long = 0,
+        val caller: Long = 0,
         val a0: Long, val a1: Long, val a2: Long,
         val a3: Long, val a4: Long, val a5: Long,
         val desc: String
@@ -96,6 +101,8 @@ object StatusParser {
                 eventsBuffered = j.optInt("events_buffered", 0),
                 tier2 = j.optBoolean("tier2", false),
                 loggingNrs = loggingNrs,
+                nrCount = loggingNrs.size,
+                nrList = loggingNrs,
                 hooks = hooks
             )
         } catch (e: Exception) {
@@ -116,11 +123,14 @@ object StatusParser {
                 for (i in 0 until arr.length()) {
                     val e = arr.getJSONObject(i)
                     events.add(SvcEvent(
+                        seq = e.optLong("seq", 0),
                         nr = e.optInt("nr"),
                         name = e.optString("name", ""),
                         pid = e.optInt("pid"),
                         uid = e.optInt("uid"),
                         comm = e.optString("comm", ""),
+                        pc = e.optLong("pc", 0),
+                        caller = e.optLong("caller", 0),
                         a0 = e.optLong("a0"), a1 = e.optLong("a1"),
                         a2 = e.optLong("a2"), a3 = e.optLong("a3"),
                         a4 = e.optLong("a4"), a5 = e.optLong("a5"),
@@ -157,17 +167,17 @@ object StatusParser {
     data class SyscallEntry(val nr: Int, val name: String, val description: String)
     data class SyscallCategory(val name: String, val icon: String, val syscalls: List<SyscallEntry>)
 
-    data class Preset(val name: String, val label: String)
+    data class Preset(val id: String, val name: String, val description: String)
 
     val presets = listOf(
-        Preset("re_basic", "逆向基础"),
-        Preset("re_full", "逆向完整"),
-        Preset("file", "文件监控"),
-        Preset("net", "网络监控"),
-        Preset("proc", "进程监控"),
-        Preset("mem", "内存监控"),
-        Preset("security", "安全审计"),
-        Preset("all", "全部启用")
+        Preset("re_basic", "re_basic", "逆向基础"),
+        Preset("re_full", "re_full", "逆向完整"),
+        Preset("file", "file", "文件监控"),
+        Preset("net", "net", "网络监控"),
+        Preset("proc", "proc", "进程监控"),
+        Preset("mem", "mem", "内存监控"),
+        Preset("security", "security", "安全审计"),
+        Preset("all", "all", "全部启用")
     )
 
     val categories = listOf(
@@ -249,4 +259,28 @@ object StatusParser {
             SyscallEntry(106, "delete_module", "卸载内核模块")
         ))
     )
+
+    private val nrNameMap: Map<Int, String> by lazy {
+        val m = HashMap<Int, String>()
+        for (cat in categories) {
+            for (s in cat.syscalls) {
+                m[s.nr] = s.name
+            }
+        }
+        m
+    }
+
+    fun nrToName(nr: Int): String = nrNameMap[nr] ?: "nr$nr"
+
+    private val nrCategoryMap: Map<Int, String> by lazy {
+        val m = HashMap<Int, String>()
+        for (cat in categories) {
+            for (s in cat.syscalls) {
+                m[s.nr] = cat.name
+            }
+        }
+        m
+    }
+
+    fun syscallCategory(nr: Int): String = nrCategoryMap[nr] ?: "-"
 }

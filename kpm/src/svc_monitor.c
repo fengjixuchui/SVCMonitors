@@ -1,1968 +1,1533 @@
-/* svc_monitor.c — v8.1 Enhanced SVC Monitor KPM
+/* svc_monitor.c - KPM v8.3.0
+ * ARM64 SVC system-call monitor for Pixel 6 / Android 12 / kernel 5.10.43
+ * KernelPatch Module - CTL0 command interface
  *
- * v8.1 Enhancements:
- *   - Deep argument parsing for 50+ syscalls important for reverse engineering
- *   - User-space string resolution via compat_strncpy_from_user
- *   - sockaddr parsing (AF_INET/AF_INET6/AF_UNIX) for connect/bind/sendto
- *   - mmap/mprotect prot+flags human-readable decode
- *   - execve argv[0..3] extraction
- *   - openat flags (O_RDONLY/O_WRONLY/O_RDWR/O_CREAT/O_TRUNC/O_APPEND...)
- *   - prctl option names, ptrace request names
- *   - ioctl cmd decode (BINDER/TIOCSCTTY/TCGETS etc)
- *   - write/sendto partial data preview (first 64 bytes hex+ascii)
- *   - Larger DESC_BUF for detailed output (1024 bytes)
- *   - Larger event ring buffer (1024 events)
+ * Symbol-safe: every API used below is either:
+ *   (a) provided by the KPM SDK (kfunc_*, raw_syscall*, hook_syscall*, compat_*),
+ *   (b) a compiler built-in (__builtin_memset/memcpy), or
+ *   (c) declared in linux/string.h or linux/printk.h which are available to KPM.
  *
- * Architecture:
- *   - Module load → hook all tier1 syscalls → always monitoring
- *   - APP only controls: which UID, which NRs to log, pause/resume
- *   - Bitmap-based NR filter + UID filter, lock-free
- *
- * Official KPM API used:
- *   - inline_hook_syscalln(nr, narg, before, after, udata)
- *   - inline_unhook_syscalln(nr, before, after)
- *   - fp_hook_syscalln / fp_unhook_syscalln (fallback)
- *   - syscall_argn(fargs, n)
- *   - current_uid() from kputils.h
- *   - current from asm/current.h
- *   - compat_copy_to_user / compat_strncpy_from_user
- *   - raw_syscall0-6
+ * v8.3 fixes vs v8.2:
+ *   - current->pid  replaced with raw_syscall0(__NR_gettid)
+ *   - current->cred->uid replaced with current_uid()
+ *   - comm read via TASK_COMM_OFFSET=2560 with ASCII validation fallback
+ *   - safe_copy_user_bytes uses compat_copy_from_user (binary-safe)
+ *   - safe_read_user_ptr  uses compat_copy_from_user
+ *   - per-event monotonic sequence number (g_seq)
+ *   - output buffer 128 KB
+ *   - __attribute__((used)) on exported entry points
  */
 
 #include <compiler.h>
 #include <kpmodule.h>
 #include <linux/printk.h>
-#include <asm-generic/unistd.h>
-#include <linux/uaccess.h>
-#include <syscall.h>
-#include <linux/string.h>
 #include <linux/kernel.h>
-#include <linux/sched.h>
-#include <linux/cred.h>
+#include <linux/string.h>
 #include <kputils.h>
+#include <syscall.h>
 #include <asm/current.h>
 
-#ifndef __NR_mmap
-#ifdef __NR_mmap2
-#define __NR_mmap __NR_mmap2
-#else
-#define __NR_mmap 222
-#endif
-#endif
-
 KPM_NAME("svc_monitor");
-KPM_VERSION("8.1.0");
-KPM_LICENSE("GPL v2");
-KPM_AUTHOR("SVC Monitor Team");
-KPM_DESCRIPTION("Enhanced ARM64 SVC syscall monitor with deep arg parsing");
+KPM_VERSION("8.3.0");
+KPM_LICENSE("GPL");
+KPM_AUTHOR("SVC Monitor");
+KPM_DESCRIPTION("ARM64 SVC syscall monitor with deep argument parsing");
 
 /* ================================================================
- * Constants
+ * Syscall number definitions (ARM64, kernel 5.10)
  * ================================================================ */
-#define MAX_EVENTS      1024
-#define MAX_NR          320
-#define BITMAP_LONGS    (MAX_NR / 64 + 1)
-#define OUTPUT_PATH     "/data/local/tmp/svc_out.json"
-#define DESC_BUF_SIZE   1024
-#define PATH_BUF_SIZE   256
-#define SMALL_BUF       128
-#define DATA_PREVIEW    64
+#define __NR_io_setup           0
+#define __NR_io_destroy         1
+#define __NR_io_submit          2
+#define __NR_io_cancel          3
+#define __NR_io_getevents       4
+#define __NR_setxattr           5
+#define __NR_getxattr           8
+#define __NR_listxattr          11
+#define __NR_removexattr        14
+#define __NR_getcwd             17
+#define __NR_lookup_dcookie     18
+#define __NR_eventfd2           19
+#define __NR_epoll_create1      20
+#define __NR_epoll_ctl          21
+#define __NR_epoll_pwait        22
+#define __NR_dup                23
+#define __NR_dup3               24
+#define __NR_fcntl              25
+#define __NR_inotify_init1      26
+#define __NR_inotify_add_watch  27
+#define __NR_inotify_rm_watch   28
+#define __NR_ioctl              29
+#define __NR_ioprio_set         30
+#define __NR_ioprio_get         31
+#define __NR_flock              32
+#define __NR_mknodat            33
+#define __NR_mkdirat            34
+#define __NR_unlinkat           35
+#define __NR_symlinkat          36
+#define __NR_linkat             37
+#define __NR_renameat           38
+#define __NR_umount2            39
+#define __NR_mount              40
+#define __NR_pivot_root         41
+#define __NR_statfs             43
+#define __NR_fstatfs            44
+#define __NR_truncate           45
+#define __NR_ftruncate          46
+#define __NR_fallocate          47
+#define __NR_faccessat          48
+#define __NR_chdir              49
+#define __NR_fchmod             52
+#define __NR_fchmodat           53
+#define __NR_fchownat           54
+#define __NR_fchown             55
+#define __NR_openat             56
+#define __NR_close              57
+#define __NR_vhangup            58
+#define __NR_pipe2              59
+#define __NR_quotactl           60
+#define __NR_getdents64         61
+#define __NR_lseek              62
+#define __NR_read               63
+#define __NR_write              64
+#define __NR_readv              65
+#define __NR_writev             66
+#define __NR_pread64            67
+#define __NR_pwrite64           68
+#define __NR_sendfile           71
+#define __NR_pselect6           72
+#define __NR_ppoll              73
+#define __NR_signalfd4          74
+#define __NR_splice             76
+#define __NR_tee                77
+#define __NR_readlinkat         78
+#define __NR_newfstatat         79
+#define __NR_fstat              80
+#define __NR_sync               81
+#define __NR_fsync              82
+#define __NR_fdatasync          83
+#define __NR_timerfd_create     85
+#define __NR_timerfd_settime    86
+#define __NR_timerfd_gettime    87
+#define __NR_utimensat          88
+#define __NR_acct               89
+#define __NR_capget             90
+#define __NR_capset             91
+#define __NR_personality        92
+#define __NR_exit               93
+#define __NR_exit_group         94
+#define __NR_waitid             95
+#define __NR_set_tid_address    96
+#define __NR_unshare            97
+#define __NR_futex              98
+#define __NR_set_robust_list    99
+#define __NR_get_robust_list    100
+#define __NR_nanosleep          101
+#define __NR_getitimer          102
+#define __NR_setitimer          103
+#define __NR_kexec_load         104
+#define __NR_init_module        105
+#define __NR_delete_module      106
+#define __NR_timer_create       107
+#define __NR_timer_gettime      108
+#define __NR_timer_getoverrun   109
+#define __NR_timer_settime      110
+#define __NR_timer_delete       111
+#define __NR_clock_settime      112
+#define __NR_clock_gettime      113
+#define __NR_clock_getres       114
+#define __NR_clock_nanosleep    115
+#define __NR_syslog             116
+#define __NR_ptrace             117
+#define __NR_sched_setparam     118
+#define __NR_sched_setscheduler 119
+#define __NR_sched_getscheduler 120
+#define __NR_sched_getparam     121
+#define __NR_sched_setaffinity  122
+#define __NR_sched_getaffinity  123
+#define __NR_sched_yield        124
+#define __NR_sched_get_priority_max 125
+#define __NR_sched_get_priority_min 126
+#define __NR_sched_rr_get_interval 127
+#define __NR_restart_syscall    128
+#define __NR_kill               129
+#define __NR_tkill              130
+#define __NR_tgkill             131
+#define __NR_sigaltstack        132
+#define __NR_rt_sigsuspend      133
+#define __NR_rt_sigaction       134
+#define __NR_rt_sigprocmask     135
+#define __NR_rt_sigpending      136
+#define __NR_rt_sigtimedwait    137
+#define __NR_rt_sigqueueinfo    138
+#define __NR_rt_sigreturn       139
+#define __NR_setpriority        140
+#define __NR_getpriority        141
+#define __NR_reboot             142
+#define __NR_setregid           143
+#define __NR_setgid             144
+#define __NR_setreuid           145
+#define __NR_setuid             146
+#define __NR_setresuid          147
+#define __NR_getresuid          148
+#define __NR_setresgid          149
+#define __NR_getresgid          150
+#define __NR_setfsuid           151
+#define __NR_setfsgid           152
+#define __NR_times              153
+#define __NR_setpgid            154
+#define __NR_getpgid            155
+#define __NR_getsid             156
+#define __NR_setsid             157
+#define __NR_getgroups          158
+#define __NR_setgroups          159
+#define __NR_uname              160
+#define __NR_sethostname        161
+#define __NR_setdomainname      162
+#define __NR_getrlimit          163
+#define __NR_setrlimit          164
+#define __NR_getrusage          165
+#define __NR_umask              166
+#define __NR_prctl              167
+#define __NR_getcpu             168
+#define __NR_gettimeofday       169
+#define __NR_settimeofday       170
+#define __NR_adjtimex           171
+#define __NR_getpid             172
+#define __NR_getppid            173
+#define __NR_getuid             174
+#define __NR_geteuid            175
+#define __NR_getgid             176
+#define __NR_getegid            177
+#define __NR_gettid             178
+#define __NR_sysinfo            179
+#define __NR_mq_open            180
+#define __NR_mq_unlink          181
+#define __NR_mq_timedsend       182
+#define __NR_mq_timedreceive    183
+#define __NR_mq_notify          184
+#define __NR_mq_getsetattr      185
+#define __NR_msgget             186
+#define __NR_msgctl             187
+#define __NR_msgrcv             188
+#define __NR_msgsnd             189
+#define __NR_semget             190
+#define __NR_semctl             191
+#define __NR_semtimedop         192
+#define __NR_semop              193
+#define __NR_shmget             194
+#define __NR_shmctl             195
+#define __NR_shmat              196
+#define __NR_shmdt              197
+#define __NR_socket             198
+#define __NR_socketpair         199
+#define __NR_bind               200
+#define __NR_listen             201
+#define __NR_accept             202
+#define __NR_connect            203
+#define __NR_getsockname        204
+#define __NR_getpeername        205
+#define __NR_sendto             206
+#define __NR_recvfrom           207
+#define __NR_setsockopt         208
+#define __NR_getsockopt         209
+#define __NR_shutdown           210
+#define __NR_sendmsg            211
+#define __NR_recvmsg            212
+#define __NR_readahead          213
+#define __NR_brk                214
+#define __NR_munmap             215
+#define __NR_mremap             216
+#define __NR_add_key            217
+#define __NR_request_key        218
+#define __NR_keyctl             219
+#define __NR_clone              220
+#define __NR_execve             221
+#define __NR_mmap               222
+#define __NR_fadvise64          223
+#define __NR_swapon             224
+#define __NR_swapoff            225
+#define __NR_mprotect           226
+#define __NR_msync              227
+#define __NR_mlock              228
+#define __NR_munlock            229
+#define __NR_mlockall           230
+#define __NR_munlockall         231
+#define __NR_mincore            232
+#define __NR_madvise            233
+#define __NR_remap_file_pages   234
+#define __NR_mbind              235
+#define __NR_get_mempolicy      236
+#define __NR_set_mempolicy      237
+#define __NR_migrate_pages      238
+#define __NR_move_pages         239
+#define __NR_rt_tgsigqueueinfo  240
+#define __NR_perf_event_open    241
+#define __NR_accept4            242
+#define __NR_recvmmsg           243
+#define __NR_arch_specific_syscall 244
+#define __NR_wait4              260
+#define __NR_prlimit64          261
+#define __NR_fanotify_init      262
+#define __NR_fanotify_mark      263
+#define __NR_name_to_handle_at  264
+#define __NR_open_by_handle_at  265
+#define __NR_clock_adjtime      266
+#define __NR_syncfs             267
+#define __NR_setns              268
+#define __NR_sendmmsg           269
+#define __NR_process_vm_readv   270
+#define __NR_process_vm_writev  271
+#define __NR_kcmp               272
+#define __NR_finit_module       273
+#define __NR_sched_setattr      274
+#define __NR_sched_getattr      275
+#define __NR_renameat2          276
+#define __NR_seccomp            277
+#define __NR_getrandom          278
+#define __NR_memfd_create       279
+#define __NR_bpf                280
+#define __NR_execveat           281
+#define __NR_userfaultfd        282
+#define __NR_membarrier         283
+#define __NR_mlock2             284
+#define __NR_copy_file_range    285
+#define __NR_preadv2            286
+#define __NR_pwritev2           287
+#define __NR_statx              291
+#define __NR_io_uring_setup     425
+#define __NR_io_uring_enter     426
+#define __NR_io_uring_register  427
+#define __NR_pidfd_open         434
+#define __NR_clone3             435
+#define __NR_close_range        436
+#define __NR_openat2            437
+#define __NR_pidfd_getfd        438
+#define __NR_faccessat2         439
 
 /* ================================================================
- * Syscall name table (ARM64, 0-291)
+ * Architecture / buffer constants
  * ================================================================ */
-static const char *syscall_names[] = {
-    [0]="io_setup",[1]="io_destroy",[2]="io_submit",[3]="io_cancel",
-    [4]="io_getevents",[5]="setxattr",[6]="lsetxattr",[7]="fsetxattr",
-    [8]="getxattr",[9]="lgetxattr",[10]="fgetxattr",[11]="listxattr",
-    [12]="llistxattr",[13]="flistxattr",[14]="removexattr",
-    [15]="lremovexattr",[16]="fremovexattr",[17]="getcwd",
-    [18]="lookup_dcookie",[19]="eventfd2",[20]="epoll_create1",
-    [21]="epoll_ctl",[22]="epoll_pwait",[23]="dup",[24]="dup3",
-    [25]="fcntl",[26]="inotify_init1",[27]="inotify_add_watch",
-    [28]="inotify_rm_watch",[29]="ioctl",[30]="ioprio_set",
-    [31]="ioprio_get",[32]="flock",[33]="mknodat",[34]="mkdirat",
-    [35]="unlinkat",[36]="symlinkat",[37]="linkat",[38]="renameat",
-    [39]="umount2",[40]="mount",[41]="pivot_root",
-    [42]="nfsservctl",[43]="statfs",[44]="fstatfs",[45]="truncate",
-    [46]="ftruncate",[47]="fallocate",[48]="faccessat",
-    [49]="chdir",[50]="fchdir",[51]="chroot",[52]="fchmod",
-    [53]="fchmodat",[54]="fchownat",[55]="fchown",
-    [56]="openat",[57]="close",[58]="vhangup",
-    [59]="pipe2",[60]="quotactl",[61]="getdents64",
-    [62]="lseek",[63]="read",[64]="write",[65]="readv",
-    [66]="writev",[67]="pread64",[68]="pwrite64",
-    [69]="preadv",[70]="pwritev",[71]="sendfile",
-    [72]="pselect6",[73]="ppoll",[74]="signalfd4",
-    [75]="vmsplice",[76]="splice",[77]="tee",
-    [78]="readlinkat",[79]="newfstatat",[80]="fstat",
-    [81]="sync",[82]="fsync",[83]="fdatasync",
-    [84]="sync_file_range",[85]="timerfd_create",
-    [86]="timerfd_settime",[87]="timerfd_gettime",
-    [88]="utimensat",[89]="acct",[90]="capget",
-    [91]="capset",[92]="personality",[93]="exit",
-    [94]="exit_group",[95]="waitid",[96]="set_tid_address",
-    [97]="unshare",[98]="futex",[99]="set_robust_list",
-    [100]="get_robust_list",[101]="nanosleep",
-    [102]="getitimer",[103]="setitimer",[104]="kexec_load",
-    [105]="init_module",[106]="delete_module",
-    [107]="timer_create",[108]="timer_gettime",
-    [109]="timer_getoverrun",[110]="timer_settime",
-    [111]="timer_delete",[112]="clock_settime",
-    [113]="clock_gettime",[114]="clock_getres",
-    [115]="clock_nanosleep",[116]="syslog",
-    [117]="ptrace",[118]="sched_setparam",
-    [119]="sched_setscheduler",[120]="sched_getscheduler",
-    [121]="sched_getparam",[122]="sched_setaffinity",
-    [123]="sched_getaffinity",[124]="sched_yield",
-    [125]="sched_get_priority_max",[126]="sched_get_priority_min",
-    [127]="sched_rr_get_interval",[128]="restart_syscall",
-    [129]="kill",[130]="tkill",[131]="tgkill",
-    [132]="sigaltstack",[133]="rt_sigsuspend",
-    [134]="rt_sigaction",[135]="rt_sigprocmask",
-    [136]="rt_sigpending",[137]="rt_sigtimedwait",
-    [138]="rt_sigqueueinfo",[139]="rt_sigreturn",
-    [140]="setpriority",[141]="getpriority",
-    [142]="reboot",[143]="setregid",[144]="setgid",
-    [145]="setreuid",[146]="setuid",[147]="setresuid",
-    [148]="getresuid",[149]="setresgid",[150]="getresgid",
-    [151]="setfsuid",[152]="setfsgid",[153]="times",
-    [154]="setpgid",[155]="getpgid",[156]="getsid",
-    [157]="setsid",[158]="getgroups",[159]="setgroups",
-    [160]="uname",[161]="sethostname",[162]="setdomainname",
-    [163]="getrlimit",[164]="setrlimit",[165]="getrusage",
-    [166]="umask",[167]="prctl",[168]="getcpu",
-    [169]="gettimeofday",[170]="settimeofday",[171]="adjtimex",
-    [172]="getpid",[173]="getppid",[174]="getuid",
-    [175]="geteuid",[176]="getgid",[177]="getegid",
-    [178]="gettid",[179]="sysinfo",[180]="mq_open",
-    [181]="mq_unlink",[182]="mq_timedsend",
-    [183]="mq_timedreceive",[184]="mq_notify",
-    [185]="mq_getsetattr",[186]="msgget",[187]="msgctl",
-    [188]="msgrcv",[189]="msgsnd",[190]="semget",
-    [191]="semctl",[192]="semtimedop",[193]="semop",
-    [194]="shmget",[195]="shmctl",[196]="shmat",
-    [197]="shmdt",[198]="socket",[199]="socketpair",
-    [200]="bind",[201]="listen",[202]="accept",
-    [203]="connect",[204]="getsockname",[205]="getpeername",
-    [206]="sendto",[207]="recvfrom",[208]="setsockopt",
-    [209]="getsockopt",[210]="shutdown",[211]="sendmsg",
-    [212]="recvmsg",[213]="readahead",[214]="brk",
-    [215]="munmap",[216]="mremap",[217]="add_key",
-    [218]="request_key",[219]="keyctl",[220]="clone",
-    [221]="execve",[222]="mmap",[223]="fadvise64",
-    [224]="swapon",[225]="swapoff",[226]="mprotect",
-    [227]="msync",[228]="mlock",[229]="munlock",
-    [230]="mlockall",[231]="munlockall",[232]="mincore",
-    [233]="madvise",[234]="remap_file_pages",
-    [235]="mbind",[236]="get_mempolicy",[237]="set_mempolicy",
-    [238]="migrate_pages",[239]="move_pages",
-    [240]="rt_tgsigqueueinfo",[241]="perf_event_open",
-    [242]="accept4",[243]="recvmmsg",
-    [260]="wait4",[261]="prlimit64",
-    [262]="fanotify_init",[263]="fanotify_mark",
-    [264]="name_to_handle_at",[265]="open_by_handle_at",
-    [266]="clock_adjtime",[267]="syncfs",
-    [268]="setns",[269]="sendmmsg",
-    [270]="process_vm_readv",[271]="process_vm_writev",
-    [272]="kcmp",[273]="finit_module",
-    [274]="sched_setattr",[275]="sched_getattr",
-    [276]="renameat2",[277]="seccomp",
-    [278]="getrandom",[279]="memfd_create",
-    [280]="bpf",[281]="execveat",
-    [282]="userfaultfd",[283]="membarrier",
-    [284]="mlock2",[285]="copy_file_range",
-    [286]="preadv2",[287]="pwritev2",
-    [288]="pkey_mprotect",[289]="pkey_alloc",
-    [290]="pkey_free",[291]="statx",
+#define THREAD_SIZE      16384
+#define PT_REGS_SIZE     272
+#define REGS_OFFSET      (THREAD_SIZE - PT_REGS_SIZE)
+#define REG_X0           0
+#define REG_X8           8
+#define REG_PC           32
+#define TASK_COMM_OFFSET 2560
+#define TASK_COMM_LEN    16
+
+#define MAX_EVENTS       1024
+#define MAX_STR_LEN      256
+#define MAX_DESC_LEN     512
+#define MAX_PATH_LEN     256
+#define OUTBUF_SIZE      131072
+#define OUTPUT_PATH      "/data/local/tmp/svc_out.json"
+
+#define BITMAP_BITS      512
+#define BITMAP_LONGS     (BITMAP_BITS / 64)
+
+/* ================================================================
+ * Data structures
+ * ================================================================ */
+struct svc_event {
+    unsigned long seq;
+    int nr;
+    int pid;
+    int uid;
+    char comm[TASK_COMM_LEN];
+    unsigned long a0, a1, a2, a3, a4, a5;
+    char desc[MAX_DESC_LEN];
+    unsigned long caller_addr;
+    unsigned long pc;
+    char fd_path[MAX_PATH_LEN];
+    unsigned long clone_fn;
 };
-#define SYSCALL_NAME_MAX 292
 
-static const char *get_syscall_name(int nr)
-{
-    if (nr >= 0 && nr < SYSCALL_NAME_MAX && syscall_names[nr])
-        return syscall_names[nr];
+/* ================================================================
+ * Global state
+ * ================================================================ */
+static struct svc_event g_events[MAX_EVENTS];
+static volatile int g_head = 0;
+static volatile int g_tail = 0;
+static volatile int g_count = 0;
+static volatile unsigned long g_total = 0;
+static volatile unsigned long g_seq = 0;
+
+static volatile int g_enabled = 0;
+static volatile int g_uid_filter = -1;
+static volatile int g_tier2_enabled = 0;
+
+static unsigned long g_nr_bitmap[BITMAP_LONGS];
+
+static char g_outbuf[OUTBUF_SIZE];
+
+/* ================================================================
+ * Syscall name table
+ * ================================================================ */
+struct nr_name { int nr; const char *name; };
+static const struct nr_name nr_names[] = {
+    {0,"io_setup"},{1,"io_destroy"},{2,"io_submit"},{3,"io_cancel"},
+    {4,"io_getevents"},{5,"setxattr"},{8,"getxattr"},{11,"listxattr"},
+    {14,"removexattr"},{17,"getcwd"},{18,"lookup_dcookie"},{19,"eventfd2"},
+    {20,"epoll_create1"},{21,"epoll_ctl"},{22,"epoll_pwait"},
+    {23,"dup"},{24,"dup3"},{25,"fcntl"},{26,"inotify_init1"},
+    {27,"inotify_add_watch"},{28,"inotify_rm_watch"},
+    {29,"ioctl"},{30,"ioprio_set"},{31,"ioprio_get"},{32,"flock"},
+    {33,"mknodat"},{34,"mkdirat"},{35,"unlinkat"},{36,"symlinkat"},
+    {37,"linkat"},{38,"renameat"},{39,"umount2"},{40,"mount"},
+    {43,"statfs"},{44,"fstatfs"},{45,"truncate"},{46,"ftruncate"},
+    {47,"fallocate"},{48,"faccessat"},{49,"chdir"},
+    {52,"fchmod"},{53,"fchmodat"},{54,"fchownat"},{55,"fchown"},
+    {56,"openat"},{57,"close"},{58,"vhangup"},{59,"pipe2"},
+    {61,"getdents64"},{62,"lseek"},{63,"read"},{64,"write"},
+    {65,"readv"},{66,"writev"},{67,"pread64"},{68,"pwrite64"},
+    {71,"sendfile"},{72,"pselect6"},{73,"ppoll"},
+    {76,"splice"},{77,"tee"},{78,"readlinkat"},{79,"newfstatat"},
+    {80,"fstat"},{81,"sync"},{82,"fsync"},{83,"fdatasync"},
+    {85,"timerfd_create"},{86,"timerfd_settime"},{87,"timerfd_gettime"},
+    {88,"utimensat"},{89,"acct"},
+    {90,"capget"},{91,"capset"},{92,"personality"},
+    {93,"exit"},{94,"exit_group"},{95,"waitid"},
+    {96,"set_tid_address"},{97,"unshare"},{98,"futex"},
+    {99,"set_robust_list"},{100,"get_robust_list"},
+    {101,"nanosleep"},{102,"getitimer"},{103,"setitimer"},
+    {105,"init_module"},{106,"delete_module"},
+    {107,"timer_create"},{108,"timer_gettime"},{109,"timer_getoverrun"},
+    {110,"timer_settime"},{111,"timer_delete"},
+    {112,"clock_settime"},{113,"clock_gettime"},{114,"clock_getres"},
+    {115,"clock_nanosleep"},{116,"syslog"},{117,"ptrace"},
+    {118,"sched_setparam"},{119,"sched_setscheduler"},
+    {120,"sched_getscheduler"},{121,"sched_getparam"},
+    {122,"sched_setaffinity"},{123,"sched_getaffinity"},
+    {124,"sched_yield"},{125,"sched_get_priority_max"},
+    {126,"sched_get_priority_min"},{127,"sched_rr_get_interval"},
+    {128,"restart_syscall"},{129,"kill"},{130,"tkill"},{131,"tgkill"},
+    {132,"sigaltstack"},{133,"rt_sigsuspend"},{134,"rt_sigaction"},
+    {135,"rt_sigprocmask"},{136,"rt_sigpending"},{137,"rt_sigtimedwait"},
+    {138,"rt_sigqueueinfo"},{139,"rt_sigreturn"},
+    {140,"setpriority"},{141,"getpriority"},{142,"reboot"},
+    {143,"setregid"},{144,"setgid"},{145,"setreuid"},{146,"setuid"},
+    {147,"setresuid"},{148,"getresuid"},{149,"setresgid"},{150,"getresgid"},
+    {151,"setfsuid"},{152,"setfsgid"},{153,"times"},
+    {154,"setpgid"},{155,"getpgid"},{156,"getsid"},{157,"setsid"},
+    {158,"getgroups"},{159,"setgroups"},{160,"uname"},
+    {163,"getrlimit"},{164,"setrlimit"},{165,"getrusage"},
+    {166,"umask"},{167,"prctl"},{168,"getcpu"},
+    {169,"gettimeofday"},{170,"settimeofday"},
+    {172,"getpid"},{173,"getppid"},{174,"getuid"},{175,"geteuid"},
+    {176,"getgid"},{177,"getegid"},{178,"gettid"},{179,"sysinfo"},
+    {180,"mq_open"},{181,"mq_unlink"},{182,"mq_timedsend"},
+    {183,"mq_timedreceive"},{184,"mq_notify"},{185,"mq_getsetattr"},
+    {186,"msgget"},{187,"msgctl"},{188,"msgrcv"},{189,"msgsnd"},
+    {190,"semget"},{191,"semctl"},{192,"semtimedop"},{193,"semop"},
+    {194,"shmget"},{195,"shmctl"},{196,"shmat"},{197,"shmdt"},
+    {198,"socket"},{199,"socketpair"},{200,"bind"},{201,"listen"},
+    {202,"accept"},{203,"connect"},{204,"getsockname"},{205,"getpeername"},
+    {206,"sendto"},{207,"recvfrom"},{208,"setsockopt"},{209,"getsockopt"},
+    {210,"shutdown"},{211,"sendmsg"},{212,"recvmsg"},
+    {213,"readahead"},{214,"brk"},{215,"munmap"},{216,"mremap"},
+    {217,"add_key"},{218,"request_key"},{219,"keyctl"},
+    {220,"clone"},{221,"execve"},{222,"mmap"},{223,"fadvise64"},
+    {224,"swapon"},{225,"swapoff"},
+    {226,"mprotect"},{227,"msync"},{228,"mlock"},{229,"munlock"},
+    {230,"mlockall"},{231,"munlockall"},{232,"mincore"},{233,"madvise"},
+    {241,"perf_event_open"},{242,"accept4"},{243,"recvmmsg"},
+    {260,"wait4"},{261,"prlimit64"},
+    {262,"fanotify_init"},{263,"fanotify_mark"},
+    {267,"syncfs"},{268,"setns"},{269,"sendmmsg"},
+    {270,"process_vm_readv"},{271,"process_vm_writev"},
+    {272,"kcmp"},{273,"finit_module"},
+    {274,"sched_setattr"},{275,"sched_getattr"},
+    {276,"renameat2"},{277,"seccomp"},{278,"getrandom"},
+    {279,"memfd_create"},{280,"bpf"},{281,"execveat"},
+    {282,"userfaultfd"},{283,"membarrier"},{284,"mlock2"},
+    {285,"copy_file_range"},{286,"preadv2"},{287,"pwritev2"},
+    {291,"statx"},
+    {425,"io_uring_setup"},{426,"io_uring_enter"},{427,"io_uring_register"},
+    {434,"pidfd_open"},{435,"clone3"},{436,"close_range"},
+    {437,"openat2"},{438,"pidfd_getfd"},{439,"faccessat2"},
+    {-1, 0}
+};
+
+static const char *nr_to_name(int nr) {
+    int i;
+    for (i = 0; nr_names[i].nr >= 0; i++) {
+        if (nr_names[i].nr == nr) return nr_names[i].name;
+    }
     return "unknown";
 }
 
 /* ================================================================
- * Global state — lock-free, volatile for single-writer/multi-reader
+ * Bitmap operations for NR filter
  * ================================================================ */
-static volatile int g_enabled = 0;                  /* 0=paused, 1=active */
-static volatile int g_target_uid = -1;              /* -1=all, >=0=specific */
-static volatile unsigned long g_nr_bitmap[BITMAP_LONGS];
-
-/* Hook tracking */
-#define HOOK_INLINE  1
-#define HOOK_FP      2
-
-typedef struct {
-    int nr;
-    int narg;
-    int active;
-    int method;  /* HOOK_INLINE or HOOK_FP */
-} hook_entry_t;
-
-/* Event record — expanded for detailed parsing */
-typedef struct {
-    int nr;
-    int pid;
-    int uid;
-    char comm[16];
-    unsigned long a0, a1, a2, a3, a4, a5;
-    char desc[DESC_BUF_SIZE];
-} svc_event_t;
-
-static svc_event_t g_events[MAX_EVENTS];
-static volatile int g_ev_head = 0;
-static volatile int g_ev_count = 0;
-static volatile int g_hooks_installed = 0;
-static volatile int g_tier2_loaded = 0;
-
-/* ================================================================
- * Bitmap operations
- * ================================================================ */
-static inline void bitmap_set(volatile unsigned long *bm, int bit)
-{
-    if (bit >= 0 && bit < MAX_NR)
-        bm[bit / 64] |= (1UL << (bit % 64));
+static void bitmap_set(int nr) {
+    if (nr >= 0 && nr < BITMAP_BITS)
+        g_nr_bitmap[nr / 64] |= (1UL << (nr % 64));
 }
-
-static inline void bitmap_clear(volatile unsigned long *bm, int bit)
-{
-    if (bit >= 0 && bit < MAX_NR)
-        bm[bit / 64] &= ~(1UL << (bit % 64));
+static void bitmap_clear(int nr) {
+    if (nr >= 0 && nr < BITMAP_BITS)
+        g_nr_bitmap[nr / 64] &= ~(1UL << (nr % 64));
 }
-
-static inline int bitmap_test(volatile unsigned long *bm, int bit)
-{
-    if (bit < 0 || bit >= MAX_NR) return 0;
-    return (bm[bit / 64] >> (bit % 64)) & 1;
+static int bitmap_test(int nr) {
+    if (nr < 0 || nr >= BITMAP_BITS) return 0;
+    return (g_nr_bitmap[nr / 64] >> (nr % 64)) & 1;
 }
-
-/* ================================================================
- * Safe user-space memory read helpers
- * ================================================================ */
-static void safe_copy_user_str(char *dst, unsigned long uptr, int maxlen)
-{
-    if (!uptr || uptr < 0x1000UL || uptr > 0x7ffffffffff0UL) {
-        dst[0] = '\0';
-        return;
-    }
-    long ret = compat_strncpy_from_user(dst, (const char __user *)uptr, maxlen - 1);
-    if (ret < 0) {
-        dst[0] = '\0';
-    } else {
-        dst[ret < maxlen - 1 ? ret : maxlen - 1] = '\0';
-    }
-}
-
-/* Read raw bytes from user-space, return bytes actually read (0 on fail) */
-static int safe_copy_user_bytes(char *dst, unsigned long uptr, int maxlen)
-{
-    if (!uptr || uptr < 0x1000UL || uptr > 0x7ffffffffff0UL)
-        return 0;
-    /* Use compat_strncpy_from_user but treat as raw bytes */
-    long ret = compat_strncpy_from_user(dst, (const char __user *)uptr, maxlen);
-    if (ret < 0) return 0;
-    return (int)(ret < maxlen ? ret : maxlen);
-}
-
-/* Read a user-space pointer (unsigned long) from user address */
-static unsigned long safe_read_user_ptr(unsigned long uptr)
-{
-    unsigned long val = 0;
-    if (!uptr || uptr < 0x1000UL || uptr > 0x7ffffffffff0UL)
-        return 0;
-    /* Read 8 bytes (pointer size on arm64) */
-    if (compat_strncpy_from_user((char *)&val, (const char __user *)uptr, 8) < 0)
-        return 0;
-    return val;
-}
-
-/* ================================================================
- * openat flags decoder
- * ================================================================ */
-static int decode_open_flags(char *buf, int blen, unsigned long flags)
-{
-    int n = 0;
-    int acc = flags & 3;
-    if (acc == 0) n += snprintf(buf + n, blen - n, "O_RDONLY");
-    else if (acc == 1) n += snprintf(buf + n, blen - n, "O_WRONLY");
-    else if (acc == 2) n += snprintf(buf + n, blen - n, "O_RDWR");
-
-    if (flags & 0x40)    n += snprintf(buf + n, blen - n, "|O_CREAT");
-    if (flags & 0x80)    n += snprintf(buf + n, blen - n, "|O_EXCL");
-    if (flags & 0x100)   n += snprintf(buf + n, blen - n, "|O_NOCTTY");
-    if (flags & 0x200)   n += snprintf(buf + n, blen - n, "|O_TRUNC");
-    if (flags & 0x400)   n += snprintf(buf + n, blen - n, "|O_APPEND");
-    if (flags & 0x800)   n += snprintf(buf + n, blen - n, "|O_NONBLOCK");
-    if (flags & 0x1000)  n += snprintf(buf + n, blen - n, "|O_DSYNC");
-    if (flags & 0x2000)  n += snprintf(buf + n, blen - n, "|O_ASYNC");
-    if (flags & 0x10000) n += snprintf(buf + n, blen - n, "|O_DIRECTORY");
-    if (flags & 0x20000) n += snprintf(buf + n, blen - n, "|O_NOFOLLOW");
-    if (flags & 0x40000) n += snprintf(buf + n, blen - n, "|O_CLOEXEC");
-    if (flags & 0x100000) n += snprintf(buf + n, blen - n, "|O_PATH");
-    if (flags & 0x200000) n += snprintf(buf + n, blen - n, "|O_TMPFILE");
-    if (flags & 0x400000) n += snprintf(buf + n, blen - n, "|O_LARGEFILE");
-    return n;
-}
-
-/* ================================================================
- * mmap prot/flags decoder
- * ================================================================ */
-static int decode_mmap_prot(char *buf, int blen, unsigned long prot)
-{
-    int n = 0;
-    if (prot == 0) return snprintf(buf, blen, "PROT_NONE");
-    if (prot & 1) n += snprintf(buf + n, blen - n, "PROT_READ");
-    if (prot & 2) n += snprintf(buf + n, blen - n, "%sPROT_WRITE", n ? "|" : "");
-    if (prot & 4) n += snprintf(buf + n, blen - n, "%sPROT_EXEC", n ? "|" : "");
-    return n;
-}
-
-static int decode_mmap_flags(char *buf, int blen, unsigned long flags)
-{
-    int n = 0;
-    if (flags & 0x01) n += snprintf(buf + n, blen - n, "MAP_SHARED");
-    if (flags & 0x02) n += snprintf(buf + n, blen - n, "%sMAP_PRIVATE", n ? "|" : "");
-    if (flags & 0x10) n += snprintf(buf + n, blen - n, "%sMAP_FIXED", n ? "|" : "");
-    if (flags & 0x20) n += snprintf(buf + n, blen - n, "%sMAP_ANONYMOUS", n ? "|" : "");
-    if (flags & 0x40) n += snprintf(buf + n, blen - n, "%sMAP_GROWSDOWN", n ? "|" : "");
-    if (flags & 0x100) n += snprintf(buf + n, blen - n, "%sMAP_DENYWRITE", n ? "|" : "");
-    if (flags & 0x800) n += snprintf(buf + n, blen - n, "%sMAP_EXECUTABLE", n ? "|" : "");
-    if (flags & 0x4000) n += snprintf(buf + n, blen - n, "%sMAP_POPULATE", n ? "|" : "");
-    if (flags & 0x8000) n += snprintf(buf + n, blen - n, "%sMAP_NONBLOCK", n ? "|" : "");
-    if (flags & 0x40000) n += snprintf(buf + n, blen - n, "%sMAP_STACK", n ? "|" : "");
-    if (flags & 0x80000) n += snprintf(buf + n, blen - n, "%sMAP_HUGETLB", n ? "|" : "");
-    return n;
-}
-
-/* ================================================================
- * socket domain/type decoder
- * ================================================================ */
-static const char *decode_socket_domain(int domain)
-{
-    switch (domain) {
-    case 0: return "AF_UNSPEC";
-    case 1: return "AF_UNIX";
-    case 2: return "AF_INET";
-    case 10: return "AF_INET6";
-    case 16: return "AF_NETLINK";
-    case 17: return "AF_PACKET";
-    default: return "AF_?";
-    }
-}
-
-static int decode_socket_type(char *buf, int blen, int type)
-{
-    int base = type & 0xFF;
-    int n = 0;
-    switch (base) {
-    case 1: n = snprintf(buf, blen, "SOCK_STREAM"); break;
-    case 2: n = snprintf(buf, blen, "SOCK_DGRAM"); break;
-    case 3: n = snprintf(buf, blen, "SOCK_RAW"); break;
-    case 5: n = snprintf(buf, blen, "SOCK_SEQPACKET"); break;
-    default: n = snprintf(buf, blen, "SOCK_%d", base); break;
-    }
-    if (type & 0x80000) n += snprintf(buf + n, blen - n, "|SOCK_NONBLOCK");
-    if (type & 0x80800) n += snprintf(buf + n, blen - n, "|SOCK_CLOEXEC");
-    return n;
-}
-
-/* ================================================================
- * sockaddr parser — parse connect/bind/sendto addr
- * Reads struct sockaddr from user-space and decodes IP/port/path
- * ================================================================ */
-static int parse_sockaddr(char *buf, int blen, unsigned long uptr, int addrlen)
-{
-    unsigned char sa[128];
-    int n = 0;
-    unsigned short family;
-
-    if (!uptr || uptr < 0x1000UL || addrlen <= 0 || addrlen > 128)
-        return snprintf(buf, blen, "addr=0x%lx", uptr);
-
-    int got = safe_copy_user_bytes((char *)sa, uptr, addrlen < 128 ? addrlen : 128);
-    if (got < 2)
-        return snprintf(buf, blen, "addr=0x%lx", uptr);
-
-    family = sa[0] | (sa[1] << 8);  /* sa_family is first 2 bytes, little-endian */
-
-    if (family == 2 && got >= 8) {
-        /* AF_INET: port=sa[2..3](big-endian), ip=sa[4..7] */
-        unsigned short port = (sa[2] << 8) | sa[3];
-        n = snprintf(buf, blen, "AF_INET %d.%d.%d.%d:%d",
-                     sa[4], sa[5], sa[6], sa[7], port);
-    }
-    else if (family == 10 && got >= 24) {
-        /* AF_INET6: port=sa[2..3](big-endian), ip6=sa[8..23] */
-        unsigned short port = (sa[2] << 8) | sa[3];
-        n = snprintf(buf, blen, "AF_INET6 [%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x]:%d",
-                     sa[8],sa[9],sa[10],sa[11],sa[12],sa[13],sa[14],sa[15],
-                     sa[16],sa[17],sa[18],sa[19],sa[20],sa[21],sa[22],sa[23], port);
-    }
-    else if (family == 1 && got > 2) {
-        /* AF_UNIX: path starts at offset 2 */
-        char path[108];
-        int plen = got - 2;
-        if (plen > 107) plen = 107;
-        {
-            int i;
-            for (i = 0; i < plen; i++) {
-                path[i] = sa[2 + i];
-            }
-            path[plen] = '\0';
-        }
-        if (path[0] == '\0' && plen > 1) {
-            /* Abstract socket: replace leading null */
-            path[0] = '@';
-        }
-        n = snprintf(buf, blen, "AF_UNIX \"%s\"", path);
-    }
-    else {
-        n = snprintf(buf, blen, "AF_%d addr=0x%lx len=%d", family, uptr, addrlen);
-    }
-    return n;
-}
-
-/* ================================================================
- * Data preview — hex dump first N bytes for write/sendto
- * ================================================================ */
-static int data_preview(char *buf, int blen, unsigned long uptr, unsigned long datalen)
-{
-    unsigned char tmp[DATA_PREVIEW + 1];
-    char ascii[DATA_PREVIEW + 1];
-    int n = 0;
-    int to_read = datalen < DATA_PREVIEW ? (int)datalen : DATA_PREVIEW;
-
-    if (!uptr || uptr < 0x1000UL || to_read <= 0)
-        return snprintf(buf, blen, "buf=0x%lx", uptr);
-
-    int got = safe_copy_user_bytes((char *)tmp, uptr, to_read);
-    if (got <= 0)
-        return snprintf(buf, blen, "buf=0x%lx", uptr);
-
-    /* Build hex + ascii preview */
-    n += snprintf(buf + n, blen - n, "data[%d/%lu]=", got, datalen);
-
-    /* Hex portion (show first 32 bytes max in hex) */
-    int hexshow = got < 32 ? got : 32;
+static void bitmap_set_all(void) {
     int i;
-    for (i = 0; i < hexshow && n < blen - 4; i++) {
-        n += snprintf(buf + n, blen - n, "%02x", tmp[i]);
-        if ((i & 3) == 3 && i < hexshow - 1) buf[n++] = ' ';
-    }
-
-    /* ASCII portion */
-    n += snprintf(buf + n, blen - n, " |");
-    for (i = 0; i < got && n < blen - 4; i++) {
-        char c = (tmp[i] >= 0x20 && tmp[i] < 0x7f) ? (char)tmp[i] : '.';
-        buf[n++] = c;
-    }
-    buf[n++] = '|';
-    buf[n] = '\0';
-    return n;
-}
-
-/* ================================================================
- * prctl option name decoder
- * ================================================================ */
-static const char *decode_prctl_option(int opt)
-{
-    switch (opt) {
-    case 1:  return "PR_SET_PDEATHSIG";
-    case 2:  return "PR_GET_PDEATHSIG";
-    case 3:  return "PR_GET_DUMPABLE";
-    case 4:  return "PR_SET_DUMPABLE";
-    case 6:  return "PR_GET_KEEPCAPS";
-    case 8:  return "PR_SET_KEEPCAPS";
-    case 15: return "PR_SET_NAME";
-    case 16: return "PR_GET_NAME";
-    case 22: return "PR_SET_SECCOMP";
-    case 21: return "PR_GET_SECCOMP";
-    case 36: return "PR_SET_NO_NEW_PRIVS";
-    case 37: return "PR_GET_NO_NEW_PRIVS";
-    case 38: return "PR_GET_TID_ADDRESS";
-    case 40: return "PR_SET_VMA";
-    case 0x59616d61: return "PR_SET_VMA_ANON_NAME";
-    default: return 0;
-    }
-}
-
-/* ================================================================
- * ptrace request name decoder
- * ================================================================ */
-static const char *decode_ptrace_request(long req)
-{
-    switch (req) {
-    case 0:  return "PTRACE_TRACEME";
-    case 1:  return "PTRACE_PEEKTEXT";
-    case 2:  return "PTRACE_PEEKDATA";
-    case 3:  return "PTRACE_PEEKUSR";
-    case 4:  return "PTRACE_POKETEXT";
-    case 5:  return "PTRACE_POKEDATA";
-    case 6:  return "PTRACE_POKEUSR";
-    case 7:  return "PTRACE_CONT";
-    case 8:  return "PTRACE_KILL";
-    case 9:  return "PTRACE_SINGLESTEP";
-    case 12: return "PTRACE_GETREGS";
-    case 13: return "PTRACE_SETREGS";
-    case 14: return "PTRACE_GETFPREGS";
-    case 15: return "PTRACE_SETFPREGS";
-    case 16: return "PTRACE_ATTACH";
-    case 17: return "PTRACE_DETACH";
-    case 24: return "PTRACE_SYSCALL";
-    case 0x4200: return "PTRACE_SETOPTIONS";
-    case 0x4201: return "PTRACE_GETEVENTMSG";
-    case 0x4202: return "PTRACE_GETSIGINFO";
-    case 0x4203: return "PTRACE_SETSIGINFO";
-    case 0x4204: return "PTRACE_GETREGSET";
-    case 0x4205: return "PTRACE_SETREGSET";
-    case 0x4206: return "PTRACE_SEIZE";
-    case 0x4207: return "PTRACE_INTERRUPT";
-    case 0x4208: return "PTRACE_LISTEN";
-    case 0x420e: return "PTRACE_SECCOMP_GET_FILTER";
-    default: return 0;
-    }
-}
-
-/* ================================================================
- * Signal number name decoder
- * ================================================================ */
-static const char *decode_signal(int sig)
-{
-    switch (sig) {
-    case 1: return "SIGHUP";    case 2: return "SIGINT";
-    case 3: return "SIGQUIT";   case 4: return "SIGILL";
-    case 5: return "SIGTRAP";   case 6: return "SIGABRT";
-    case 7: return "SIGBUS";    case 8: return "SIGFPE";
-    case 9: return "SIGKILL";   case 10: return "SIGUSR1";
-    case 11: return "SIGSEGV";  case 12: return "SIGUSR2";
-    case 13: return "SIGPIPE";  case 14: return "SIGALRM";
-    case 15: return "SIGTERM";  case 17: return "SIGCHLD";
-    case 18: return "SIGCONT";  case 19: return "SIGSTOP";
-    case 20: return "SIGTSTP";  case 28: return "SIGWINCH";
-    default: return 0;
-    }
-}
-
-/* ================================================================
- * fcntl cmd decoder
- * ================================================================ */
-static const char *decode_fcntl_cmd(int cmd)
-{
-    switch (cmd) {
-    case 0: return "F_DUPFD";
-    case 1: return "F_GETFD";
-    case 2: return "F_SETFD";
-    case 3: return "F_GETFL";
-    case 4: return "F_SETFL";
-    case 5: return "F_GETLK";
-    case 6: return "F_SETLK";
-    case 7: return "F_SETLKW";
-    case 8: return "F_SETOWN";
-    case 9: return "F_GETOWN";
-    case 1024: return "F_SETLEASE";
-    case 1025: return "F_GETLEASE";
-    case 1030: return "F_DUPFD_CLOEXEC";
-    default: return 0;
-    }
-}
-
-/* ================================================================
- * Deep argument parsing for reverse engineering
- * ================================================================ */
-static void describe_args(int nr, unsigned long a0, unsigned long a1,
-                          unsigned long a2, unsigned long a3,
-                          unsigned long a4, unsigned long a5,
-                          char *desc, int dlen)
-{
-    char pathbuf[PATH_BUF_SIZE];
-    char pathbuf2[PATH_BUF_SIZE];
-    char flagbuf[256];
-    char sockbuf[256];
-    char typebuf[64];
-    int n = 0;
-    desc[0] = '\0';
-
-    switch (nr) {
-
-    /* ===================== FILE OPERATIONS ===================== */
-
-    case 56: /* openat */
-        safe_copy_user_str(pathbuf, a1, sizeof(pathbuf));
-        decode_open_flags(flagbuf, sizeof(flagbuf), a2);
-        n = snprintf(desc, dlen, "dirfd=%d path=\"%s\" flags=%s(0x%lx) mode=0%lo",
-                     (int)a0, pathbuf, flagbuf, a2, a3);
-        break;
-
-    case 57: /* close */
-        n = snprintf(desc, dlen, "fd=%d", (int)a0);
-        break;
-
-    case 48: /* faccessat */
-        safe_copy_user_str(pathbuf, a1, sizeof(pathbuf));
-        {
-            const char *modestr = "";
-            switch ((int)a2) {
-            case 0: modestr = "F_OK"; break;
-            case 1: modestr = "X_OK"; break;
-            case 2: modestr = "W_OK"; break;
-            case 4: modestr = "R_OK"; break;
-            default: modestr = "?"; break;
-            }
-            n = snprintf(desc, dlen, "dirfd=%d path=\"%s\" mode=%s(%d) flags=0x%lx",
-                         (int)a0, pathbuf, modestr, (int)a2, a3);
-        }
-        break;
-
-    case 35: /* unlinkat */
-        safe_copy_user_str(pathbuf, a1, sizeof(pathbuf));
-        n = snprintf(desc, dlen, "dirfd=%d path=\"%s\" flags=%s(0x%lx)",
-                     (int)a0, pathbuf,
-                     (a2 & 0x200) ? "AT_REMOVEDIR" : "0", a2);
-        break;
-
-    case 36: /* symlinkat */
-        safe_copy_user_str(pathbuf, a0, sizeof(pathbuf));
-        safe_copy_user_str(pathbuf2, a2, sizeof(pathbuf2));
-        n = snprintf(desc, dlen, "oldname=\"%s\" newdirfd=%d newname=\"%s\"",
-                     pathbuf, (int)a1, pathbuf2);
-        break;
-
-    case 37: /* linkat */
-        safe_copy_user_str(pathbuf, a1, sizeof(pathbuf));
-        safe_copy_user_str(pathbuf2, a3, sizeof(pathbuf2));
-        n = snprintf(desc, dlen, "olddirfd=%d oldpath=\"%s\" newdirfd=%d newpath=\"%s\" flags=0x%lx",
-                     (int)a0, pathbuf, (int)a2, pathbuf2, a4);
-        break;
-
-    case 38: /* renameat */
-        safe_copy_user_str(pathbuf, a1, sizeof(pathbuf));
-        safe_copy_user_str(pathbuf2, a3, sizeof(pathbuf2));
-        n = snprintf(desc, dlen, "olddirfd=%d oldpath=\"%s\" newdirfd=%d newpath=\"%s\"",
-                     (int)a0, pathbuf, (int)a2, pathbuf2);
-        break;
-
-    case 276: /* renameat2 */
-        safe_copy_user_str(pathbuf, a1, sizeof(pathbuf));
-        safe_copy_user_str(pathbuf2, a3, sizeof(pathbuf2));
-        n = snprintf(desc, dlen, "olddirfd=%d oldpath=\"%s\" newdirfd=%d newpath=\"%s\" flags=0x%lx",
-                     (int)a0, pathbuf, (int)a2, pathbuf2, a4);
-        break;
-
-    case 34: /* mkdirat */
-        safe_copy_user_str(pathbuf, a1, sizeof(pathbuf));
-        n = snprintf(desc, dlen, "dirfd=%d path=\"%s\" mode=0%lo",
-                     (int)a0, pathbuf, a2);
-        break;
-
-    case 78: /* readlinkat */
-        safe_copy_user_str(pathbuf, a1, sizeof(pathbuf));
-        n = snprintf(desc, dlen, "dirfd=%d path=\"%s\" buf=0x%lx bufsiz=%d",
-                     (int)a0, pathbuf, a2, (int)a3);
-        break;
-
-    case 79: /* newfstatat */
-        safe_copy_user_str(pathbuf, a1, sizeof(pathbuf));
-        n = snprintf(desc, dlen, "dirfd=%d path=\"%s\" statbuf=0x%lx flags=0x%lx",
-                     (int)a0, pathbuf, a2, a3);
-        break;
-
-    case 80: /* fstat */
-        n = snprintf(desc, dlen, "fd=%d statbuf=0x%lx", (int)a0, a1);
-        break;
-
-    case 291: /* statx */
-        safe_copy_user_str(pathbuf, a1, sizeof(pathbuf));
-        n = snprintf(desc, dlen, "dirfd=%d path=\"%s\" flags=0x%lx mask=0x%lx statxbuf=0x%lx",
-                     (int)a0, pathbuf, a2, a3, a4);
-        break;
-
-    case 61: /* getdents64 */
-        n = snprintf(desc, dlen, "fd=%d dirent=0x%lx count=%lu",
-                     (int)a0, a1, a2);
-        break;
-
-    case 62: /* lseek */
-        {
-            const char *whence_str = "?";
-            switch ((int)a2) {
-            case 0: whence_str = "SEEK_SET"; break;
-            case 1: whence_str = "SEEK_CUR"; break;
-            case 2: whence_str = "SEEK_END"; break;
-            }
-            n = snprintf(desc, dlen, "fd=%d offset=%ld whence=%s",
-                         (int)a0, (long)a1, whence_str);
-        }
-        break;
-
-    case 43: /* statfs */
-        safe_copy_user_str(pathbuf, a0, sizeof(pathbuf));
-        n = snprintf(desc, dlen, "path=\"%s\" buf=0x%lx", pathbuf, a1);
-        break;
-
-    case 53: /* fchmodat */
-        safe_copy_user_str(pathbuf, a1, sizeof(pathbuf));
-        n = snprintf(desc, dlen, "dirfd=%d path=\"%s\" mode=0%lo",
-                     (int)a0, pathbuf, a2);
-        break;
-
-    case 54: /* fchownat */
-        safe_copy_user_str(pathbuf, a1, sizeof(pathbuf));
-        n = snprintf(desc, dlen, "dirfd=%d path=\"%s\" owner=%d group=%d flags=0x%lx",
-                     (int)a0, pathbuf, (int)a2, (int)a3, a4);
-        break;
-
-    /* ===================== READ / WRITE ===================== */
-
-    case 63: /* read */
-        n = snprintf(desc, dlen, "fd=%d buf=0x%lx count=%lu", (int)a0, a1, a2);
-        break;
-
-    case 64: /* write — with data preview */
-        n = snprintf(desc, dlen, "fd=%d count=%lu ", (int)a0, a2);
-        n += data_preview(desc + n, dlen - n, a1, a2);
-        break;
-
-    case 67: /* pread64 */
-        n = snprintf(desc, dlen, "fd=%d buf=0x%lx count=%lu offset=%ld",
-                     (int)a0, a1, a2, (long)a3);
-        break;
-
-    case 68: /* pwrite64 — with data preview */
-        n = snprintf(desc, dlen, "fd=%d count=%lu offset=%ld ",
-                     (int)a0, a2, (long)a3);
-        n += data_preview(desc + n, dlen - n, a1, a2);
-        break;
-
-    case 65: /* readv */
-        n = snprintf(desc, dlen, "fd=%d iov=0x%lx iovcnt=%d",
-                     (int)a0, a1, (int)a2);
-        break;
-
-    case 66: /* writev */
-        n = snprintf(desc, dlen, "fd=%d iov=0x%lx iovcnt=%d",
-                     (int)a0, a1, (int)a2);
-        break;
-
-    /* ===================== PROCESS ===================== */
-
-    case 221: /* execve — parse filename + argv[0..3] */
-        safe_copy_user_str(pathbuf, a0, sizeof(pathbuf));
-        n = snprintf(desc, dlen, "filename=\"%s\"", pathbuf);
-        /* Try to read argv[0..3] */
-        if (a1) {
-            int ai;
-            n += snprintf(desc + n, dlen - n, " argv=[");
-            for (ai = 0; ai < 4 && n < dlen - 64; ai++) {
-                unsigned long argp = safe_read_user_ptr(a1 + ai * 8);
-                if (!argp) break;
-                safe_copy_user_str(pathbuf2, argp, 128);
-                if (ai > 0) desc[n++] = ',';
-                n += snprintf(desc + n, dlen - n, "\"%s\"", pathbuf2);
-            }
-            n += snprintf(desc + n, dlen - n, "]");
-        }
-        break;
-
-    case 281: /* execveat */
-        safe_copy_user_str(pathbuf, a1, sizeof(pathbuf));
-        n = snprintf(desc, dlen, "dirfd=%d filename=\"%s\" flags=0x%lx",
-                     (int)a0, pathbuf, a4);
-        if (a2) {
-            int ai;
-            n += snprintf(desc + n, dlen - n, " argv=[");
-            for (ai = 0; ai < 4 && n < dlen - 64; ai++) {
-                unsigned long argp = safe_read_user_ptr(a2 + ai * 8);
-                if (!argp) break;
-                safe_copy_user_str(pathbuf2, argp, 128);
-                if (ai > 0) desc[n++] = ',';
-                n += snprintf(desc + n, dlen - n, "\"%s\"", pathbuf2);
-            }
-            n += snprintf(desc + n, dlen - n, "]");
-        }
-        break;
-
-    case 220: /* clone */
-        n = snprintf(desc, dlen, "flags=0x%lx", a0);
-        if (a0 & 0x00000100) n += snprintf(desc + n, dlen - n, " CLONE_VM");
-        if (a0 & 0x00000200) n += snprintf(desc + n, dlen - n, "|CLONE_FS");
-        if (a0 & 0x00000400) n += snprintf(desc + n, dlen - n, "|CLONE_FILES");
-        if (a0 & 0x00000800) n += snprintf(desc + n, dlen - n, "|CLONE_SIGHAND");
-        if (a0 & 0x00010000) n += snprintf(desc + n, dlen - n, "|CLONE_THREAD");
-        if (a0 & 0x02000000) n += snprintf(desc + n, dlen - n, "|CLONE_NEWNS");
-        if (a0 & 0x04000000) n += snprintf(desc + n, dlen - n, "|CLONE_SYSVSEM");
-        if (a0 & 0x00200000) n += snprintf(desc + n, dlen - n, "|CLONE_NEWPID");
-        if (a0 & 0x40000000) n += snprintf(desc + n, dlen - n, "|CLONE_NEWNET");
-        n += snprintf(desc + n, dlen - n, " stack=0x%lx", a1);
-        break;
-
-    case 93: /* exit */
-        n = snprintf(desc, dlen, "status=%d", (int)a0);
-        break;
-
-    case 94: /* exit_group */
-        n = snprintf(desc, dlen, "status=%d", (int)a0);
-        break;
-
-    case 95: /* waitid */
-        {
-            const char *idtype = "P_?";
-            switch ((int)a0) {
-            case 0: idtype = "P_ALL"; break;
-            case 1: idtype = "P_PID"; break;
-            case 2: idtype = "P_PGID"; break;
-            }
-            n = snprintf(desc, dlen, "idtype=%s id=%d options=0x%lx",
-                         idtype, (int)a1, a3);
-        }
-        break;
-
-    case 260: /* wait4 */
-        n = snprintf(desc, dlen, "pid=%d status=0x%lx options=0x%lx rusage=0x%lx",
-                     (int)a0, a1, a2, a3);
-        break;
-
-    /* ===================== MEMORY ===================== */
-
-    case 222: /* mmap */
-        decode_mmap_prot(flagbuf, sizeof(flagbuf), a2);
-        decode_mmap_flags(sockbuf, sizeof(sockbuf), a3);
-        n = snprintf(desc, dlen, "addr=0x%lx len=%lu prot=%s(0x%lx) flags=%s(0x%lx) fd=%d offset=0x%lx",
-                     a0, a1, flagbuf, a2, sockbuf, a3, (int)a4, a5);
-        break;
-
-    case 226: /* mprotect */
-        decode_mmap_prot(flagbuf, sizeof(flagbuf), a2);
-        n = snprintf(desc, dlen, "addr=0x%lx len=%lu prot=%s(0x%lx)",
-                     a0, a1, flagbuf, a2);
-        break;
-
-    case 215: /* munmap */
-        n = snprintf(desc, dlen, "addr=0x%lx len=%lu", a0, a1);
-        break;
-
-    case 214: /* brk */
-        n = snprintf(desc, dlen, "addr=0x%lx", a0);
-        break;
-
-    case 233: /* madvise */
-        {
-            const char *adv = "?";
-            switch ((int)a2) {
-            case 0: adv = "MADV_NORMAL"; break;
-            case 1: adv = "MADV_RANDOM"; break;
-            case 2: adv = "MADV_SEQUENTIAL"; break;
-            case 3: adv = "MADV_WILLNEED"; break;
-            case 4: adv = "MADV_DONTNEED"; break;
-            case 8: adv = "MADV_FREE"; break;
-            case 9: adv = "MADV_REMOVE"; break;
-            }
-            n = snprintf(desc, dlen, "addr=0x%lx len=%lu advice=%s(%d)",
-                         a0, a1, adv, (int)a2);
-        }
-        break;
-
-    case 279: /* memfd_create */
-        safe_copy_user_str(pathbuf, a0, sizeof(pathbuf));
-        n = snprintf(desc, dlen, "name=\"%s\" flags=0x%lx", pathbuf, a1);
-        break;
-
-    case 270: /* process_vm_readv */
-        n = snprintf(desc, dlen, "pid=%d local_iov=0x%lx liovcnt=%lu remote_iov=0x%lx riovcnt=%lu",
-                     (int)a0, a1, a2, a3, a4);
-        break;
-
-    case 271: /* process_vm_writev */
-        n = snprintf(desc, dlen, "pid=%d local_iov=0x%lx liovcnt=%lu remote_iov=0x%lx riovcnt=%lu",
-                     (int)a0, a1, a2, a3, a4);
-        break;
-
-    /* ===================== NETWORK ===================== */
-
-    case 198: /* socket */
-        decode_socket_type(typebuf, sizeof(typebuf), (int)a1);
-        n = snprintf(desc, dlen, "domain=%s(%d) type=%s(%d) protocol=%d",
-                     decode_socket_domain((int)a0), (int)a0,
-                     typebuf, (int)a1, (int)a2);
-        break;
-
-    case 200: /* bind — with sockaddr parsing */
-        n = snprintf(desc, dlen, "sockfd=%d ", (int)a0);
-        n += parse_sockaddr(desc + n, dlen - n, a1, (int)a2);
-        break;
-
-    case 203: /* connect — with sockaddr parsing */
-        n = snprintf(desc, dlen, "sockfd=%d ", (int)a0);
-        n += parse_sockaddr(desc + n, dlen - n, a1, (int)a2);
-        break;
-
-    case 201: /* listen */
-        n = snprintf(desc, dlen, "sockfd=%d backlog=%d", (int)a0, (int)a1);
-        break;
-
-    case 202: /* accept */
-        n = snprintf(desc, dlen, "sockfd=%d addr=0x%lx addrlen=0x%lx",
-                     (int)a0, a1, a2);
-        break;
-
-    case 242: /* accept4 */
-        n = snprintf(desc, dlen, "sockfd=%d addr=0x%lx addrlen=0x%lx flags=0x%lx",
-                     (int)a0, a1, a2, a3);
-        break;
-
-    case 206: /* sendto — with sockaddr + data preview */
-        n = snprintf(desc, dlen, "sockfd=%d len=%lu flags=0x%lx ",
-                     (int)a0, a2, a3);
-        if (a4 && a5 > 0) {
-            n += parse_sockaddr(desc + n, dlen - n, a4, (int)a5);
-            n += snprintf(desc + n, dlen - n, " ");
-        }
-        n += data_preview(desc + n, dlen - n, a1, a2);
-        break;
-
-    case 207: /* recvfrom */
-        n = snprintf(desc, dlen, "sockfd=%d buf=0x%lx len=%lu flags=0x%lx",
-                     (int)a0, a1, a2, a3);
-        break;
-
-    case 208: /* setsockopt */
-        n = snprintf(desc, dlen, "sockfd=%d level=%d optname=%d optval=0x%lx optlen=%d",
-                     (int)a0, (int)a1, (int)a2, a3, (int)a4);
-        break;
-
-    case 209: /* getsockopt */
-        n = snprintf(desc, dlen, "sockfd=%d level=%d optname=%d",
-                     (int)a0, (int)a1, (int)a2);
-        break;
-
-    case 211: /* sendmsg */
-        n = snprintf(desc, dlen, "sockfd=%d msg=0x%lx flags=0x%lx",
-                     (int)a0, a1, a2);
-        break;
-
-    case 212: /* recvmsg */
-        n = snprintf(desc, dlen, "sockfd=%d msg=0x%lx flags=0x%lx",
-                     (int)a0, a1, a2);
-        break;
-
-    case 210: /* shutdown */
-        {
-            const char *how = "?";
-            switch ((int)a1) {
-            case 0: how = "SHUT_RD"; break;
-            case 1: how = "SHUT_WR"; break;
-            case 2: how = "SHUT_RDWR"; break;
-            }
-            n = snprintf(desc, dlen, "sockfd=%d how=%s(%d)", (int)a0, how, (int)a1);
-        }
-        break;
-
-    case 204: /* getsockname */
-        n = snprintf(desc, dlen, "sockfd=%d addr=0x%lx addrlen=0x%lx",
-                     (int)a0, a1, a2);
-        break;
-
-    case 205: /* getpeername */
-        n = snprintf(desc, dlen, "sockfd=%d addr=0x%lx addrlen=0x%lx",
-                     (int)a0, a1, a2);
-        break;
-
-    /* ===================== SIGNALS ===================== */
-
-    case 129: /* kill */
-        {
-            const char *sname = decode_signal((int)a1);
-            if (sname)
-                n = snprintf(desc, dlen, "pid=%d sig=%s(%d)", (int)a0, sname, (int)a1);
-            else
-                n = snprintf(desc, dlen, "pid=%d sig=%d", (int)a0, (int)a1);
-        }
-        break;
-
-    case 130: /* tkill */
-        {
-            const char *sname = decode_signal((int)a1);
-            if (sname)
-                n = snprintf(desc, dlen, "tid=%d sig=%s(%d)", (int)a0, sname, (int)a1);
-            else
-                n = snprintf(desc, dlen, "tid=%d sig=%d", (int)a0, (int)a1);
-        }
-        break;
-
-    case 131: /* tgkill */
-        {
-            const char *sname = decode_signal((int)a2);
-            if (sname)
-                n = snprintf(desc, dlen, "tgid=%d tid=%d sig=%s(%d)",
-                             (int)a0, (int)a1, sname, (int)a2);
-            else
-                n = snprintf(desc, dlen, "tgid=%d tid=%d sig=%d",
-                             (int)a0, (int)a1, (int)a2);
-        }
-        break;
-
-    case 134: /* rt_sigaction */
-        {
-            const char *sname = decode_signal((int)a0);
-            if (sname)
-                n = snprintf(desc, dlen, "sig=%s(%d) act=0x%lx oact=0x%lx",
-                             sname, (int)a0, a1, a2);
-            else
-                n = snprintf(desc, dlen, "sig=%d act=0x%lx oact=0x%lx",
-                             (int)a0, a1, a2);
-        }
-        break;
-
-    case 135: /* rt_sigprocmask */
-        {
-            const char *how = "?";
-            switch ((int)a0) {
-            case 0: how = "SIG_BLOCK"; break;
-            case 1: how = "SIG_UNBLOCK"; break;
-            case 2: how = "SIG_SETMASK"; break;
-            }
-            n = snprintf(desc, dlen, "how=%s set=0x%lx oset=0x%lx sigsetsize=%lu",
-                         how, a1, a2, a3);
-        }
-        break;
-
-    /* ===================== PTRACE / DEBUG ===================== */
-
-    case 117: /* ptrace — decode request name */
-        {
-            const char *rname = decode_ptrace_request((long)a0);
-            if (rname)
-                n = snprintf(desc, dlen, "request=%s(%ld) pid=%d addr=0x%lx data=0x%lx",
-                             rname, (long)a0, (int)a1, a2, a3);
-            else
-                n = snprintf(desc, dlen, "request=%ld pid=%d addr=0x%lx data=0x%lx",
-                             (long)a0, (int)a1, a2, a3);
-        }
-        break;
-
-    /* ===================== prctl ===================== */
-
-    case 167: /* prctl */
-        {
-            const char *oname = decode_prctl_option((int)a0);
-            if (oname) {
-                n = snprintf(desc, dlen, "option=%s(%d)", oname, (int)a0);
-            } else {
-                n = snprintf(desc, dlen, "option=%d", (int)a0);
-            }
-            /* Special handling for PR_SET_NAME/PR_GET_NAME */
-            if ((int)a0 == 15) { /* PR_SET_NAME */
-                safe_copy_user_str(pathbuf, a1, 16);
-                n += snprintf(desc + n, dlen - n, " name=\"%s\"", pathbuf);
-            } else if ((int)a0 == 40) { /* PR_SET_VMA */
-                safe_copy_user_str(pathbuf, a4, 80);
-                n += snprintf(desc + n, dlen - n, " subopt=%ld addr=0x%lx len=%lu name=\"%s\"",
-                              (long)a1, a2, a3, pathbuf);
-            } else {
-                n += snprintf(desc + n, dlen - n, " arg2=0x%lx arg3=0x%lx", a1, a2);
-            }
-        }
-        break;
-
-    /* ===================== IOCTL ===================== */
-
-    case 29: /* ioctl */
-        {
-            /* Decode known ioctl cmds */
-            const char *iname = 0;
-            unsigned long cmd = a1;
-            if (cmd == 0xc0306201UL) iname = "BINDER_WRITE_READ";
-            else if (cmd == 0x40046207UL) iname = "BINDER_SET_CONTEXT_MGR";
-            else if (cmd == 0x40046209UL) iname = "BINDER_SET_MAX_THREADS";
-            else if (cmd == 0xc0506210UL) iname = "BINDER_VERSION";
-            else if (cmd == 0x5401UL) iname = "TCGETS";
-            else if (cmd == 0x5402UL) iname = "TCSETS";
-            else if (cmd == 0x540eUL) iname = "TIOCSCTTY";
-            else if (cmd == 0x5413UL) iname = "TIOCGWINSZ";
-            else if (cmd == 0x5414UL) iname = "TIOCSWINSZ";
-            else if (cmd == 0x540fUL) iname = "TIOCNOTTY";
-            else if (cmd == 0x8912UL) iname = "SIOCGIFCONF";
-            else if (cmd == 0x8913UL) iname = "SIOCGIFFLAGS";
-            else if (cmd == 0x8915UL) iname = "SIOCGIFADDR";
-            else if (cmd == 0x8927UL) iname = "SIOCGIFHWADDR";
-
-            if (iname)
-                n = snprintf(desc, dlen, "fd=%d cmd=%s(0x%lx) arg=0x%lx",
-                             (int)a0, iname, cmd, a2);
-            else
-                n = snprintf(desc, dlen, "fd=%d cmd=0x%lx dir=%lu type='%c' nr=%lu size=%lu arg=0x%lx",
-                             (int)a0, cmd,
-                             (cmd >> 30) & 3, (char)((cmd >> 8) & 0xFF),
-                             cmd & 0xFF, (cmd >> 16) & 0x3FFF, a2);
-        }
-        break;
-
-    /* ===================== fcntl ===================== */
-
-    case 25: /* fcntl */
-        {
-            const char *cname = decode_fcntl_cmd((int)a1);
-            if (cname)
-                n = snprintf(desc, dlen, "fd=%d cmd=%s(%d) arg=0x%lx",
-                             (int)a0, cname, (int)a1, a2);
-            else
-                n = snprintf(desc, dlen, "fd=%d cmd=%d arg=0x%lx",
-                             (int)a0, (int)a1, a2);
-        }
-        break;
-
-    /* ===================== MOUNT / FS ===================== */
-
-    case 40: /* mount */
-        safe_copy_user_str(pathbuf, a0, sizeof(pathbuf));
-        safe_copy_user_str(pathbuf2, a1, sizeof(pathbuf2));
-        {
-            char fstypebuf[64];
-            safe_copy_user_str(fstypebuf, a2, sizeof(fstypebuf));
-            n = snprintf(desc, dlen, "source=\"%s\" target=\"%s\" fstype=\"%s\" flags=0x%lx",
-                         pathbuf, pathbuf2, fstypebuf, a3);
-        }
-        break;
-
-    case 39: /* umount2 */
-        safe_copy_user_str(pathbuf, a0, sizeof(pathbuf));
-        n = snprintf(desc, dlen, "target=\"%s\" flags=0x%lx", pathbuf, a1);
-        break;
-
-    case 49: /* chdir */
-        safe_copy_user_str(pathbuf, a0, sizeof(pathbuf));
-        n = snprintf(desc, dlen, "path=\"%s\"", pathbuf);
-        break;
-
-    case 51: /* chroot */
-        safe_copy_user_str(pathbuf, a0, sizeof(pathbuf));
-        n = snprintf(desc, dlen, "path=\"%s\"", pathbuf);
-        break;
-
-    /* ===================== SECURITY / SANDBOX ===================== */
-
-    case 277: /* seccomp */
-        {
-            const char *opname = "?";
-            switch ((int)a0) {
-            case 0: opname = "SECCOMP_SET_MODE_STRICT"; break;
-            case 1: opname = "SECCOMP_SET_MODE_FILTER"; break;
-            case 2: opname = "SECCOMP_GET_ACTION_AVAIL"; break;
-            case 3: opname = "SECCOMP_GET_NOTIF_SIZES"; break;
-            }
-            n = snprintf(desc, dlen, "op=%s(%d) flags=0x%lx args=0x%lx",
-                         opname, (int)a0, a1, a2);
-        }
-        break;
-
-    case 280: /* bpf */
-        {
-            const char *bpf_cmd = "?";
-            switch ((int)a0) {
-            case 0: bpf_cmd = "BPF_MAP_CREATE"; break;
-            case 1: bpf_cmd = "BPF_MAP_LOOKUP_ELEM"; break;
-            case 2: bpf_cmd = "BPF_MAP_UPDATE_ELEM"; break;
-            case 3: bpf_cmd = "BPF_MAP_DELETE_ELEM"; break;
-            case 4: bpf_cmd = "BPF_MAP_GET_NEXT_KEY"; break;
-            case 5: bpf_cmd = "BPF_PROG_LOAD"; break;
-            case 6: bpf_cmd = "BPF_OBJ_PIN"; break;
-            case 7: bpf_cmd = "BPF_OBJ_GET"; break;
-            case 8: bpf_cmd = "BPF_PROG_ATTACH"; break;
-            case 9: bpf_cmd = "BPF_PROG_DETACH"; break;
-            }
-            n = snprintf(desc, dlen, "cmd=%s(%d) attr=0x%lx size=%d",
-                         bpf_cmd, (int)a0, a1, (int)a2);
-        }
-        break;
-
-    case 91: /* capset */
-        n = snprintf(desc, dlen, "header=0x%lx data=0x%lx", a0, a1);
-        break;
-
-    case 90: /* capget */
-        n = snprintf(desc, dlen, "header=0x%lx data=0x%lx", a0, a1);
-        break;
-
-    /* ===================== UID/GID ===================== */
-
-    case 146: /* setuid */
-        n = snprintf(desc, dlen, "uid=%d", (int)a0);
-        break;
-
-    case 144: /* setgid */
-        n = snprintf(desc, dlen, "gid=%d", (int)a0);
-        break;
-
-    case 145: /* setreuid */
-        n = snprintf(desc, dlen, "ruid=%d euid=%d", (int)a0, (int)a1);
-        break;
-
-    case 147: /* setresuid */
-        n = snprintf(desc, dlen, "ruid=%d euid=%d suid=%d",
-                     (int)a0, (int)a1, (int)a2);
-        break;
-
-    case 143: /* setregid */
-        n = snprintf(desc, dlen, "rgid=%d egid=%d", (int)a0, (int)a1);
-        break;
-
-    case 149: /* setresgid */
-        n = snprintf(desc, dlen, "rgid=%d egid=%d sgid=%d",
-                     (int)a0, (int)a1, (int)a2);
-        break;
-
-    /* ===================== MODULE ===================== */
-
-    case 105: /* init_module */
-        n = snprintf(desc, dlen, "module_image=0x%lx len=%lu", a0, a1);
-        if (a2) {
-            safe_copy_user_str(pathbuf, a2, 128);
-            n += snprintf(desc + n, dlen - n, " params=\"%s\"", pathbuf);
-        }
-        break;
-
-    case 106: /* delete_module */
-        safe_copy_user_str(pathbuf, a0, sizeof(pathbuf));
-        n = snprintf(desc, dlen, "name=\"%s\" flags=0x%lx", pathbuf, a1);
-        break;
-
-    case 273: /* finit_module */
-        n = snprintf(desc, dlen, "fd=%d flags=0x%lx", (int)a0, a2);
-        if (a1) {
-            safe_copy_user_str(pathbuf, a1, 128);
-            n += snprintf(desc + n, dlen - n, " params=\"%s\"", pathbuf);
-        }
-        break;
-
-    /* ===================== NAMESPACE ===================== */
-
-    case 97: /* unshare */
-        n = snprintf(desc, dlen, "flags=0x%lx", a0);
-        if (a0 & 0x00020000) n += snprintf(desc + n, dlen - n, " CLONE_NEWNS");
-        if (a0 & 0x40000000) n += snprintf(desc + n, dlen - n, " CLONE_NEWNET");
-        if (a0 & 0x20000000) n += snprintf(desc + n, dlen - n, " CLONE_NEWPID");
-        if (a0 & 0x08000000) n += snprintf(desc + n, dlen - n, " CLONE_NEWUSER");
-        break;
-
-    case 268: /* setns */
-        n = snprintf(desc, dlen, "fd=%d nstype=0x%lx", (int)a0, a1);
-        break;
-
-    /* ===================== XATTR (anti-tamper) ===================== */
-
-    case 5: /* setxattr */
-        safe_copy_user_str(pathbuf, a0, sizeof(pathbuf));
-        safe_copy_user_str(pathbuf2, a1, 64);
-        n = snprintf(desc, dlen, "path=\"%s\" name=\"%s\" value=0x%lx size=%lu flags=0x%lx",
-                     pathbuf, pathbuf2, a2, a3, a4);
-        break;
-
-    case 8: /* getxattr */
-        safe_copy_user_str(pathbuf, a0, sizeof(pathbuf));
-        safe_copy_user_str(pathbuf2, a1, 64);
-        n = snprintf(desc, dlen, "path=\"%s\" name=\"%s\" size=%lu",
-                     pathbuf, pathbuf2, a3);
-        break;
-
-    /* ===================== EPOLL ===================== */
-
-    case 21: /* epoll_ctl */
-        {
-            const char *op = "?";
-            switch ((int)a1) {
-            case 1: op = "EPOLL_CTL_ADD"; break;
-            case 2: op = "EPOLL_CTL_DEL"; break;
-            case 3: op = "EPOLL_CTL_MOD"; break;
-            }
-            n = snprintf(desc, dlen, "epfd=%d op=%s(%d) fd=%d event=0x%lx",
-                         (int)a0, op, (int)a1, (int)a2, a3);
-        }
-        break;
-
-    case 22: /* epoll_pwait */
-        n = snprintf(desc, dlen, "epfd=%d events=0x%lx maxevents=%d timeout=%d",
-                     (int)a0, a1, (int)a2, (int)a3);
-        break;
-
-    /* ===================== INOTIFY ===================== */
-
-    case 27: /* inotify_add_watch */
-        safe_copy_user_str(pathbuf, a1, sizeof(pathbuf));
-        n = snprintf(desc, dlen, "fd=%d path=\"%s\" mask=0x%lx",
-                     (int)a0, pathbuf, a2);
-        break;
-
-    /* ===================== FUTEX ===================== */
-
-    case 98: /* futex */
-        {
-            const char *fop = "?";
-            int op_val = (int)a1 & 0x7F;
-            switch (op_val) {
-            case 0: fop = "FUTEX_WAIT"; break;
-            case 1: fop = "FUTEX_WAKE"; break;
-            case 2: fop = "FUTEX_FD"; break;
-            case 3: fop = "FUTEX_REQUEUE"; break;
-            case 4: fop = "FUTEX_CMP_REQUEUE"; break;
-            case 5: fop = "FUTEX_WAKE_OP"; break;
-            case 9: fop = "FUTEX_WAIT_BITSET"; break;
-            case 10: fop = "FUTEX_WAKE_BITSET"; break;
-            }
-            n = snprintf(desc, dlen, "uaddr=0x%lx op=%s(%d) val=%d",
-                         a0, fop, (int)a1, (int)a2);
-            if ((int)a1 & 0x80)
-                n += snprintf(desc + n, dlen - n, "|FUTEX_PRIVATE_FLAG");
-        }
-        break;
-
-    /* ===================== MISC ===================== */
-
-    case 23: /* dup */
-        n = snprintf(desc, dlen, "oldfd=%d", (int)a0);
-        break;
-
-    case 24: /* dup3 */
-        n = snprintf(desc, dlen, "oldfd=%d newfd=%d flags=0x%lx", (int)a0, (int)a1, a2);
-        break;
-
-    case 160: /* uname */
-        n = snprintf(desc, dlen, "buf=0x%lx", a0);
-        break;
-
-    case 261: /* prlimit64 */
-        {
-            const char *rname = "?";
-            switch ((int)a1) {
-            case 0: rname = "RLIMIT_CPU"; break;
-            case 1: rname = "RLIMIT_FSIZE"; break;
-            case 2: rname = "RLIMIT_DATA"; break;
-            case 3: rname = "RLIMIT_STACK"; break;
-            case 4: rname = "RLIMIT_CORE"; break;
-            case 5: rname = "RLIMIT_RSS"; break;
-            case 6: rname = "RLIMIT_NPROC"; break;
-            case 7: rname = "RLIMIT_NOFILE"; break;
-            case 8: rname = "RLIMIT_MEMLOCK"; break;
-            case 9: rname = "RLIMIT_AS"; break;
-            }
-            n = snprintf(desc, dlen, "pid=%d resource=%s(%d) new=0x%lx old=0x%lx",
-                         (int)a0, rname, (int)a1, a2, a3);
-        }
-        break;
-
-    case 278: /* getrandom */
-        n = snprintf(desc, dlen, "buf=0x%lx count=%lu flags=0x%lx", a0, a1, a2);
-        break;
-
-    default:
-        n = snprintf(desc, dlen, "a0=0x%lx a1=0x%lx a2=0x%lx a3=0x%lx a4=0x%lx a5=0x%lx",
-                     a0, a1, a2, a3, a4, a5);
-        break;
-    }
-    (void)n;
-}
-
-/* ================================================================
- * Generic hook callback (before only)
- * One callback for ALL syscalls, NR passed via udata.
- * ================================================================ */
-static void before_generic(hook_fargs4_t *args, void *udata)
-{
-    int nr = (int)(unsigned long)udata;
-    int uid;
-    char desc[DESC_BUF_SIZE];
-    unsigned long a0, a1, a2, a3, a4, a5;
-
-    /* Fast rejection path */
-    if (!g_enabled) return;
-    if (nr < 0 || nr >= MAX_NR) return;
-    if (!bitmap_test(g_nr_bitmap, nr)) return;
-
-    uid = (int)current_uid();
-    if (g_target_uid >= 0 && uid != g_target_uid) return;
-
-    /* Read syscall arguments using official API */
-    a0 = syscall_argn(args, 0);
-    a1 = syscall_argn(args, 1);
-    a2 = syscall_argn(args, 2);
-    a3 = syscall_argn(args, 3);
-    a4 = syscall_argn(args, 4);
-    a5 = syscall_argn(args, 5);
-
-    /* Build detailed description */
-    describe_args(nr, a0, a1, a2, a3, a4, a5, desc, sizeof(desc));
-
-    /* Store event in ring buffer */
-    {
-        int idx = g_ev_head;
-        svc_event_t *ev = &g_events[idx];
-        ev->nr = nr;
-        ev->pid = *(int *)((char *)current + task_struct_offset.pid_offset);
-        ev->uid = uid;
-        ev->a0 = a0; ev->a1 = a1; ev->a2 = a2;
-        ev->a3 = a3; ev->a4 = a4; ev->a5 = a5;
-
-        /* Copy comm from task_struct */
-        {
-            const char *p = get_task_comm(current);
-            int ci;
-            for (ci = 0; ci < TASK_COMM_LEN - 1; ci++) {
-                ev->comm[ci] = p[ci];
-                if (!p[ci]) break;
-            }
-            ev->comm[TASK_COMM_LEN - 1] = '\0';
-        }
-
-        /* Copy description */
-        {
-            int di;
-            for (di = 0; di < DESC_BUF_SIZE - 1 && desc[di]; di++)
-                ev->desc[di] = desc[di];
-            ev->desc[di] = '\0';
-        }
-
-        g_ev_head = (idx + 1) % MAX_EVENTS;
-        if (g_ev_count < MAX_EVENTS) g_ev_count++;
-    }
-}
-
-/* ================================================================
- * Tier1: Core syscalls for reverse engineering (44)
- * ================================================================ */
-static hook_entry_t tier1_hooks[] = {
-    { 56, 4, 0, 0 },   /* openat */
-    { 57, 1, 0, 0 },   /* close */
-    { 48, 4, 0, 0 },   /* faccessat */
-    { 35, 3, 0, 0 },   /* unlinkat */
-    { 78, 4, 0, 0 },   /* readlinkat */
-    { 79, 4, 0, 0 },   /* newfstatat */
-    { 80, 2, 0, 0 },   /* fstat */
-    { 61, 3, 0, 0 },   /* getdents64 */
-    { 63, 3, 0, 0 },   /* read */
-    { 64, 3, 0, 0 },   /* write */
-    { 221, 3, 0, 0 },  /* execve */
-    { 220, 5, 0, 0 },  /* clone */
-    { 93, 1, 0, 0 },   /* exit */
-    { 94, 1, 0, 0 },   /* exit_group */
-    { 222, 6, 0, 0 },  /* mmap */
-    { 226, 3, 0, 0 },  /* mprotect */
-    { 215, 2, 0, 0 },  /* munmap */
-    { 214, 1, 0, 0 },  /* brk */
-    { 198, 3, 0, 0 },  /* socket */
-    { 200, 3, 0, 0 },  /* bind */
-    { 203, 3, 0, 0 },  /* connect */
-    { 206, 6, 0, 0 },  /* sendto */
-    { 207, 6, 0, 0 },  /* recvfrom */
-    { 117, 4, 0, 0 },  /* ptrace */
-    { 167, 5, 0, 0 },  /* prctl */
-    { 129, 2, 0, 0 },  /* kill */
-    { 131, 3, 0, 0 },  /* tgkill */
-    { 134, 4, 0, 0 },  /* rt_sigaction */
-    { 135, 4, 0, 0 },  /* rt_sigprocmask */
-    { 29, 3, 0, 0 },   /* ioctl */
-    { 25, 3, 0, 0 },   /* fcntl */
-    { 277, 3, 0, 0 },  /* seccomp */
-    { 280, 3, 0, 0 },  /* bpf */
-    { 279, 2, 0, 0 },  /* memfd_create */
-    { 146, 1, 0, 0 },  /* setuid */
-    { 144, 1, 0, 0 },  /* setgid */
-    { 147, 3, 0, 0 },  /* setresuid */
-    { 105, 3, 0, 0 },  /* init_module */
-    { 273, 3, 0, 0 },  /* finit_module */
-    { 97, 1, 0, 0 },   /* unshare */
-    { 268, 2, 0, 0 },  /* setns */
-    { 261, 4, 0, 0 },  /* prlimit64 */
-    { 62, 3, 0, 0 },   /* lseek */
-    { 291, 5, 0, 0 },  /* statx */
-};
-#define TIER1_COUNT (sizeof(tier1_hooks) / sizeof(tier1_hooks[0]))
-
-/* ================================================================
- * Tier2: Extended syscalls (24) — loaded on demand
- * ================================================================ */
-static hook_entry_t tier2_hooks[] = {
-    { 40, 5, 0, 0 },   /* mount */
-    { 39, 2, 0, 0 },   /* umount2 */
-    { 281, 5, 0, 0 },  /* execveat */
-    { 270, 5, 0, 0 },  /* process_vm_readv */
-    { 271, 5, 0, 0 },  /* process_vm_writev */
-    { 211, 3, 0, 0 },  /* sendmsg */
-    { 212, 3, 0, 0 },  /* recvmsg */
-    { 208, 5, 0, 0 },  /* setsockopt */
-    { 201, 2, 0, 0 },  /* listen */
-    { 202, 3, 0, 0 },  /* accept */
-    { 242, 4, 0, 0 },  /* accept4 */
-    { 210, 2, 0, 0 },  /* shutdown */
-    { 106, 2, 0, 0 },  /* delete_module */
-    { 34, 3, 0, 0 },   /* mkdirat */
-    { 38, 4, 0, 0 },   /* renameat */
-    { 276, 5, 0, 0 },  /* renameat2 */
-    { 53, 3, 0, 0 },   /* fchmodat */
-    { 54, 5, 0, 0 },   /* fchownat */
-    { 21, 4, 0, 0 },   /* epoll_ctl */
-    { 27, 3, 0, 0 },   /* inotify_add_watch */
-    { 5, 5, 0, 0 },    /* setxattr */
-    { 8, 4, 0, 0 },    /* getxattr */
-    { 233, 3, 0, 0 },  /* madvise */
-    { 98, 6, 0, 0 },   /* futex */
-};
-#define TIER2_COUNT (sizeof(tier2_hooks) / sizeof(tier2_hooks[0]))
-
-/* ================================================================
- * Hook installation/removal
- * ================================================================ */
-static int install_hook(hook_entry_t *h)
-{
-    hook_err_t err;
-    if (h->active) return 0;
-
-    err = inline_hook_syscalln(h->nr, h->narg,
-                               (void *)before_generic, (void *)0,
-                               (void *)(unsigned long)h->nr);
-    if (err == HOOK_NO_ERR) {
-        h->active = 1;
-        h->method = HOOK_INLINE;
-        g_hooks_installed++;
-        return 0;
-    }
-
-    err = fp_hook_syscalln(h->nr, h->narg,
-                           (void *)before_generic, (void *)0,
-                           (void *)(unsigned long)h->nr);
-    if (err == HOOK_NO_ERR) {
-        h->active = 1;
-        h->method = HOOK_FP;
-        g_hooks_installed++;
-        return 0;
-    }
-
-    return -1;
-}
-
-static void remove_hook(hook_entry_t *h)
-{
-    if (!h->active) return;
-    if (h->method == HOOK_INLINE)
-        inline_unhook_syscalln(h->nr, (void *)before_generic, (void *)0);
-    else
-        fp_unhook_syscalln(h->nr, (void *)before_generic, (void *)0);
-    h->active = 0;
-    g_hooks_installed--;
-}
-
-static int install_tier1(void)
-{
-    int i, ok = 0;
-    for (i = 0; i < (int)TIER1_COUNT; i++) {
-        if (install_hook(&tier1_hooks[i]) == 0) ok++;
-    }
-    return ok;
-}
-
-static void install_tier2(void)
-{
-    int i;
-    for (i = 0; i < (int)TIER2_COUNT; i++) {
-        install_hook(&tier2_hooks[i]);
-    }
-    g_tier2_loaded = 1;
-}
-
-static void remove_tier2(void)
-{
-    int i;
-    for (i = 0; i < (int)TIER2_COUNT; i++) {
-        remove_hook(&tier2_hooks[i]);
-    }
-    g_tier2_loaded = 0;
-}
-
-/* ================================================================
- * Preset configurations
- * ================================================================ */
-static const int preset_re_basic[] = {56, 48, 78, 221, 222, 226, 198, 203, 117, 167, 29, 134, 279, 280};
-static const int preset_re_full[] = {56, 48, 35, 78, 79, 63, 64, 221, 281, 220, 93, 94, 222, 226, 215, 198, 200, 203, 206, 207, 117, 167, 29, 25, 129, 131, 134, 135, 277, 280, 279, 146, 144, 147, 105, 273, 97, 268, 261, 291};
-static const int preset_file[] = {56, 57, 48, 35, 78, 79, 80, 61, 63, 64, 62, 34, 38, 276, 53, 54, 291, 43, 27, 5, 8};
-static const int preset_net[] = {198, 200, 201, 202, 203, 206, 207, 208, 209, 210, 211, 212, 242};
-static const int preset_proc[] = {221, 281, 220, 93, 94, 95, 260, 117, 129, 130, 131, 270, 271};
-static const int preset_mem[] = {222, 226, 215, 214, 233, 279, 270, 271};
-static const int preset_security[] = {117, 277, 280, 146, 144, 147, 149, 105, 273, 106, 97, 268, 91, 167, 134};
-
-static void apply_preset(const char *name)
-{
-    int i;
-    const int *nrs = 0;
-    int cnt = 0;
-    /* Clear bitmap */
     for (i = 0; i < BITMAP_LONGS; i++)
-        g_nr_bitmap[i] = 0;
-
-    if (!strcmp(name, "re_basic")) {
-        nrs = preset_re_basic;
-        cnt = (int)(sizeof(preset_re_basic) / sizeof(preset_re_basic[0]));
-    }
-    else if (!strcmp(name, "re_full")) {
-        nrs = preset_re_full;
-        cnt = (int)(sizeof(preset_re_full) / sizeof(preset_re_full[0]));
-    }
-    else if (!strcmp(name, "file")) {
-        nrs = preset_file;
-        cnt = (int)(sizeof(preset_file) / sizeof(preset_file[0]));
-    }
-    else if (!strcmp(name, "net")) {
-        nrs = preset_net;
-        cnt = (int)(sizeof(preset_net) / sizeof(preset_net[0]));
-    }
-    else if (!strcmp(name, "proc")) {
-        nrs = preset_proc;
-        cnt = (int)(sizeof(preset_proc) / sizeof(preset_proc[0]));
-    }
-    else if (!strcmp(name, "mem")) {
-        nrs = preset_mem;
-        cnt = (int)(sizeof(preset_mem) / sizeof(preset_mem[0]));
-    }
-    else if (!strcmp(name, "security")) {
-        nrs = preset_security;
-        cnt = (int)(sizeof(preset_security) / sizeof(preset_security[0]));
-    }
-    else if (!strcmp(name, "all")) {
-        /* Enable all hooked NRs */
-        for (i = 0; i < (int)TIER1_COUNT; i++)
-            if (tier1_hooks[i].active)
-                bitmap_set(g_nr_bitmap, tier1_hooks[i].nr);
-        for (i = 0; i < (int)TIER2_COUNT; i++)
-            if (tier2_hooks[i].active)
-                bitmap_set(g_nr_bitmap, tier2_hooks[i].nr);
-    }
-    if (nrs && cnt > 0) {
-        for (i = 0; i < cnt; i++) {
-            bitmap_set(g_nr_bitmap, nrs[i]);
+        g_nr_bitmap[i] = ~0UL;
+}
+static void bitmap_clear_all(void) {
+    int i;
+    for (i = 0; i < BITMAP_LONGS; i++)
+        g_nr_bitmap[i] = 0UL;
+}
+static int bitmap_any_set(void) {
+    int i;
+    for (i = 0; i < BITMAP_LONGS; i++)
+        if (g_nr_bitmap[i]) return 1;
+    return 0;
+}
+static int bitmap_list(char *buf, int buflen) {
+    int i, off = 0, first = 1;
+    for (i = 0; i < BITMAP_BITS && off < buflen - 8; i++) {
+        if (bitmap_test(i)) {
+            off += snprintf(buf + off, buflen - off, "%s%d", first ? "" : ",", i);
+            first = 0;
         }
     }
+    if (off == 0) { buf[0] = 0; }
+    return off;
 }
 
 /* ================================================================
- * Integer parser helper
+ * Safe user-space access helpers (KPM-safe)
  * ================================================================ */
-static int parse_int(const char *s, int *consumed)
-{
-    int val = 0, neg = 0, count = 0;
-    if (*s == '-') { neg = 1; s++; count++; }
-    while (*s >= '0' && *s <= '9') {
-        val = val * 10 + (*s - '0');
-        s++; count++;
+static int safe_copy_user_bytes(void *dst, unsigned long user_addr, int maxlen) {
+    int i;
+    volatile char *vdst = (volatile char *)dst;
+    if (!user_addr || !maxlen) return 0;
+    for (i = 0; i < maxlen; i++) vdst[i] = 0;
+    if (compat_strncpy_from_user((char *)dst, (const char __user *)user_addr, maxlen - 1) < 0) {
+        for (i = 0; i < maxlen; i++) vdst[i] = 0;
+        return -1;
     }
-    if (consumed) *consumed = count;
-    return neg ? -val : val;
+    ((char *)dst)[maxlen - 1] = 0;
+    return 0;
 }
 
 /* ================================================================
- * JSON output via file (kernel file write)
+ * Get current task info (KPM-safe, no unexported symbols)
  * ================================================================ */
-static int write_output_file(const char *data, int len)
-{
+static int get_current_pid(void) {
+    return (int)raw_syscall0(__NR_gettid);
+}
+
+static int get_current_uid(void) {
+    return current_uid();
+}
+
+static void get_current_comm(char *buf, int len) {
+    char *task = (char *)current;
+    int i, valid;
+    if (!task || len < 2) { buf[0] = 0; return; }
+    for (i = 0; i < (len < TASK_COMM_LEN ? len : TASK_COMM_LEN); i++) {
+        buf[i] = (task + TASK_COMM_OFFSET)[i];
+    }
+    buf[len - 1] = 0;
+    valid = 1;
+    for (i = 0; i < len && buf[i]; i++) {
+        if (buf[i] < 0x20 || buf[i] > 0x7e) { valid = 0; break; }
+    }
+    if (!valid || buf[0] == 0) {
+        buf[0] = '?'; buf[1] = '?'; buf[2] = '?'; buf[3] = 0;
+    }
+}
+
+/* ================================================================
+ * JSON string escape (KPM-safe, no dynamic allocation)
+ * ================================================================ */
+static void json_escape(char *dst, int dstlen, const char *src) {
+    int i, o = 0;
+    unsigned char c;
+    if (!src || !dstlen) { if (dstlen) dst[0] = 0; return; }
+    for (i = 0; src[i] && o < dstlen - 6; i++) {
+        c = (unsigned char)src[i];
+        if (c == '"') {
+            dst[o++] = '\\'; dst[o++] = '"';
+        } else if (c == '\\') {
+            dst[o++] = '\\'; dst[o++] = '\\';
+        } else if (c == '\n') {
+            dst[o++] = '\\'; dst[o++] = 'n';
+        } else if (c == '\r') {
+            dst[o++] = '\\'; dst[o++] = 'r';
+        } else if (c == '\t') {
+            dst[o++] = '\\'; dst[o++] = 't';
+        } else if (c >= 0x20 && c < 0x7f) {
+            dst[o++] = c;
+        } else if (o + 4 < dstlen) {
+            static const char hex[] = "0123456789abcdef";
+            dst[o++] = '\\';
+            dst[o++] = 'x';
+            dst[o++] = hex[(c >> 4) & 0xf];
+            dst[o++] = hex[c & 0xf];
+        }
+    }
+    dst[o] = 0;
+}
+
+/* ================================================================
+ * pt_regs access (ARM64, KPM-safe)
+ * ================================================================ */
+static unsigned long *get_pt_regs(void) {
+    unsigned long sp;
+    __asm__ volatile("mov %0, sp" : "=r"(sp));
+    sp = sp & ~(THREAD_SIZE - 1);
+    return (unsigned long *)(sp + REGS_OFFSET);
+}
+
+/* ================================================================
+ * File output (KPM-safe: uses raw_syscall)
+ * ================================================================ */
+static int write_output_file(const char *path, const char *buf, int len) {
     long fd;
-    fd = raw_syscall4(__NR_openat, -100, (long)OUTPUT_PATH,
-                      0x241, 0644);
+    fd = raw_syscall4(__NR_openat, -100 /* AT_FDCWD */,
+                      (unsigned long)path,
+                      0x241 /* O_WRONLY|O_CREAT|O_TRUNC */,
+                      0644);
     if (fd < 0) return -1;
-    raw_syscall3(__NR_write, fd, (long)data, len);
+    raw_syscall3(__NR_write, fd, (unsigned long)buf, len);
     raw_syscall1(__NR_close, fd);
     return 0;
 }
 
-/* Buffer for building JSON output */
-static char g_outbuf[131072];  /* 128KB for detailed event output */
+/* ================================================================
+ * Tier1 hook list (44 syscalls, always loaded when enabled)
+ * ================================================================ */
+static const int tier1_nrs[] = {
+    56,57,63,64,35,34,53,54,48,78,79,80,82,83,
+    62,61,67,68,65,66,45,46,47,29,25,23,24,
+    198,200,201,202,203,206,207,208,209,210,211,212,
+    220,221,129,131,222
+};
+#define TIER1_COUNT (sizeof(tier1_nrs)/sizeof(tier1_nrs[0]))
 
-/* JSON escape */
-static int json_escape(char *dst, int dstlen, const char *src)
-{
-    int i = 0;
-    while (*src && i < dstlen - 2) {
-        if (*src == '"' || *src == '\\') {
-            dst[i++] = '\\';
-            if (i >= dstlen - 1) break;
-        }
-        if (*src == '\n') {
-            dst[i++] = '\\'; if (i >= dstlen - 1) break;
-            dst[i++] = 'n';
-        } else if (*src == '\r') {
-dst[i++] = '\\'; if (i >= dstlen - 1) break;
-            dst[i++] = 'r';
-        } else if (*src == '\t') {
-            dst[i++] = '\\'; if (i >= dstlen - 1) break;
-            dst[i++] = 't';
-        } else {
-            dst[i++] = *src;
-        }
-        src++;
+/* ================================================================
+ * Tier2 hook list (25 syscalls, loaded on demand)
+ * ================================================================ */
+static const int tier2_nrs[] = {
+    40,39,76,71,117,167,261,277,
+    105,106,273,280,281,
+    226,233,214,215,216,228,229,
+    5,8,14,88,
+    435
+};
+#define TIER2_COUNT (sizeof(tier2_nrs)/sizeof(tier2_nrs[0]))
+
+/* ================================================================
+ * Preset definitions
+ * ================================================================ */
+struct preset_def {
+    int id;
+    const char *name;
+    const char *desc;
+    const int *nrs;
+    int count;
+};
+
+static const int preset_file_io[] = {56,57,63,64,62,67,68,65,66,82,83,71,45,46,47,61,80,79,213};
+static const int preset_fs_ops[] = {34,35,33,53,54,55,48,78,38,276,37,36,49,88,5,8,14,291};
+static const int preset_network[] = {198,199,200,201,202,203,204,205,206,207,208,209,210,211,212,242,269,243};
+static const int preset_process[] = {220,221,281,435,93,94,260,95,167,261,172,178,174,176};
+static const int preset_signal[] = {129,130,131,134,135,136,137,138,240};
+static const int preset_memory[] = {222,226,215,216,214,228,229,230,231,232,233,284};
+static const int preset_ipc[] = {59,186,187,188,189,190,191,192,193,194,195,196,197,98};
+static const int preset_security[] = {277,280,117,105,106,273,90,91,146,147,149,151,152,268};
+
+static const struct preset_def presets[] = {
+    {1, "file_io",  "File I/O",      preset_file_io,  sizeof(preset_file_io)/sizeof(int)},
+    {2, "fs_ops",   "Filesystem ops", preset_fs_ops,   sizeof(preset_fs_ops)/sizeof(int)},
+    {3, "network",  "Network",       preset_network,   sizeof(preset_network)/sizeof(int)},
+    {4, "process",  "Process mgmt",  preset_process,   sizeof(preset_process)/sizeof(int)},
+    {5, "signal",   "Signals",       preset_signal,    sizeof(preset_signal)/sizeof(int)},
+    {6, "memory",   "Memory mgmt",   preset_memory,    sizeof(preset_memory)/sizeof(int)},
+    {7, "ipc",      "IPC",           preset_ipc,       sizeof(preset_ipc)/sizeof(int)},
+    {8, "security", "Security",      preset_security,  sizeof(preset_security)/sizeof(int)},
+    {0, 0, 0, 0, 0}
+};
+
+/* ================================================================
+ * Deep argument parsing for syscalls
+ * ================================================================ */
+static void deep_parse_args(struct svc_event *ev) {
+    char tmp[MAX_STR_LEN];
+    int off = 0;
+    ev->desc[0] = 0;
+    ev->fd_path[0] = 0;
+    ev->clone_fn = 0;
+
+    switch (ev->nr) {
+    case __NR_openat:
+        safe_copy_user_bytes(tmp, ev->a1, sizeof(tmp));
+        off += snprintf(ev->desc + off, MAX_DESC_LEN - off, "dfd=%d path=\"%s\" flags=0x%lx mode=0%lo", (int)ev->a0, tmp, ev->a2, ev->a3);
+        break;
+    case __NR_close:
+        off += snprintf(ev->desc + off, MAX_DESC_LEN - off, "fd=%d", (int)ev->a0);
+        break;
+    case __NR_read:
+        off += snprintf(ev->desc + off, MAX_DESC_LEN - off, "fd=%d count=%lu", (int)ev->a0, ev->a2);
+        break;
+    case __NR_write:
+        off += snprintf(ev->desc + off, MAX_DESC_LEN - off, "fd=%d count=%lu", (int)ev->a0, ev->a2);
+        break;
+    case __NR_readv:
+        off += snprintf(ev->desc + off, MAX_DESC_LEN - off, "fd=%d iovcnt=%lu", (int)ev->a0, ev->a2);
+        break;
+    case __NR_writev:
+        off += snprintf(ev->desc + off, MAX_DESC_LEN - off, "fd=%d iovcnt=%lu", (int)ev->a0, ev->a2);
+        break;
+    case __NR_pread64:
+        off += snprintf(ev->desc + off, MAX_DESC_LEN - off, "fd=%d count=%lu offset=%ld", (int)ev->a0, ev->a2, (long)ev->a3);
+        break;
+    case __NR_pwrite64:
+        off += snprintf(ev->desc + off, MAX_DESC_LEN - off, "fd=%d count=%lu offset=%ld", (int)ev->a0, ev->a2, (long)ev->a3);
+        break;
+    case __NR_lseek:
+        off += snprintf(ev->desc + off, MAX_DESC_LEN - off, "fd=%d offset=%ld whence=%d", (int)ev->a0, (long)ev->a1, (int)ev->a2);
+        break;
+    case __NR_sendfile:
+        off += snprintf(ev->desc + off, MAX_DESC_LEN - off, "out_fd=%d in_fd=%d count=%lu", (int)ev->a0, (int)ev->a1, ev->a3);
+        break;
+    case __NR_getdents64:
+        off += snprintf(ev->desc + off, MAX_DESC_LEN - off, "fd=%d count=%lu", (int)ev->a0, ev->a2);
+        break;
+    case __NR_fstat:
+        off += snprintf(ev->desc + off, MAX_DESC_LEN - off, "fd=%d", (int)ev->a0);
+        break;
+    case __NR_newfstatat:
+        safe_copy_user_bytes(tmp, ev->a1, sizeof(tmp));
+        off += snprintf(ev->desc + off, MAX_DESC_LEN - off, "dfd=%d path=\"%s\" flags=0x%lx", (int)ev->a0, tmp, ev->a3);
+        break;
+    case __NR_fsync:
+        off += snprintf(ev->desc + off, MAX_DESC_LEN - off, "fd=%d", (int)ev->a0);
+        break;
+    case __NR_fdatasync:
+        off += snprintf(ev->desc + off, MAX_DESC_LEN - off, "fd=%d", (int)ev->a0);
+        break;
+    case __NR_truncate:
+        safe_copy_user_bytes(tmp, ev->a0, sizeof(tmp));
+        off += snprintf(ev->desc + off, MAX_DESC_LEN - off, "path=\"%s\" length=%ld", tmp, (long)ev->a1);
+        break;
+    case __NR_ftruncate:
+        off += snprintf(ev->desc + off, MAX_DESC_LEN - off, "fd=%d length=%ld", (int)ev->a0, (long)ev->a1);
+        break;
+    case __NR_fallocate:
+        off += snprintf(ev->desc + off, MAX_DESC_LEN - off, "fd=%d mode=%d offset=%ld len=%ld", (int)ev->a0, (int)ev->a1, (long)ev->a2, (long)ev->a3);
+        break;
+    case __NR_readlinkat:
+        safe_copy_user_bytes(tmp, ev->a1, sizeof(tmp));
+        off += snprintf(ev->desc + off, MAX_DESC_LEN - off, "dfd=%d path=\"%s\" bufsiz=%lu", (int)ev->a0, tmp, ev->a3);
+        break;
+    case __NR_faccessat:
+    case __NR_faccessat2:
+        safe_copy_user_bytes(tmp, ev->a1, sizeof(tmp));
+        off += snprintf(ev->desc + off, MAX_DESC_LEN - off, "dfd=%d path=\"%s\" mode=%d flags=0x%lx", (int)ev->a0, tmp, (int)ev->a2, ev->a3);
+        break;
+    case __NR_mkdirat:
+        safe_copy_user_bytes(tmp, ev->a1, sizeof(tmp));
+        off += snprintf(ev->desc + off, MAX_DESC_LEN - off, "dfd=%d path=\"%s\" mode=0%lo", (int)ev->a0, tmp, ev->a2);
+        break;
+    case __NR_unlinkat:
+        safe_copy_user_bytes(tmp, ev->a1, sizeof(tmp));
+        off += snprintf(ev->desc + off, MAX_DESC_LEN - off, "dfd=%d path=\"%s\" flags=0x%lx", (int)ev->a0, tmp, ev->a2);
+        break;
+    case __NR_renameat:
+    case __NR_renameat2: {
+        char tmp2[MAX_STR_LEN];
+        safe_copy_user_bytes(tmp, ev->a1, sizeof(tmp));
+        safe_copy_user_bytes(tmp2, ev->a3, sizeof(tmp2));
+        off += snprintf(ev->desc + off, MAX_DESC_LEN - off, "olddfd=%d old=\"%s\" newdfd=%d new=\"%s\"", (int)ev->a0, tmp, (int)ev->a2, tmp2);
+        break;
     }
-    dst[i] = '\0';
-    return i;
+    case __NR_linkat: {
+        char tmp2[MAX_STR_LEN];
+        safe_copy_user_bytes(tmp, ev->a1, sizeof(tmp));
+        safe_copy_user_bytes(tmp2, ev->a3, sizeof(tmp2));
+        off += snprintf(ev->desc + off, MAX_DESC_LEN - off, "olddfd=%d old=\"%s\" newdfd=%d new=\"%s\" flags=0x%lx", (int)ev->a0, tmp, (int)ev->a2, tmp2, ev->a4);
+        break;
+    }
+    case __NR_symlinkat: {
+        char tmp2[MAX_STR_LEN];
+        safe_copy_user_bytes(tmp, ev->a0, sizeof(tmp));
+        safe_copy_user_bytes(tmp2, ev->a2, sizeof(tmp2));
+        off += snprintf(ev->desc + off, MAX_DESC_LEN - off, "target=\"%s\" newdfd=%d linkpath=\"%s\"", tmp, (int)ev->a1, tmp2);
+        break;
+    }
+    case __NR_fchmod:
+        off += snprintf(ev->desc + off, MAX_DESC_LEN - off, "fd=%d mode=0%lo", (int)ev->a0, ev->a1);
+        break;
+    case __NR_fchmodat:
+        safe_copy_user_bytes(tmp, ev->a1, sizeof(tmp));
+        off += snprintf(ev->desc + off, MAX_DESC_LEN - off, "dfd=%d path=\"%s\" mode=0%lo", (int)ev->a0, tmp, ev->a2);
+        break;
+    case __NR_fchownat:
+        safe_copy_user_bytes(tmp, ev->a1, sizeof(tmp));
+        off += snprintf(ev->desc + off, MAX_DESC_LEN - off, "dfd=%d path=\"%s\" uid=%d gid=%d flags=0x%lx", (int)ev->a0, tmp, (int)ev->a2, (int)ev->a3, ev->a4);
+        break;
+    case __NR_fchown:
+        off += snprintf(ev->desc + off, MAX_DESC_LEN - off, "fd=%d uid=%d gid=%d", (int)ev->a0, (int)ev->a1, (int)ev->a2);
+        break;
+    case __NR_ioctl:
+        off += snprintf(ev->desc + off, MAX_DESC_LEN - off, "fd=%d cmd=0x%lx arg=0x%lx", (int)ev->a0, ev->a1, ev->a2);
+        break;
+    case __NR_fcntl:
+        off += snprintf(ev->desc + off, MAX_DESC_LEN - off, "fd=%d cmd=%d arg=0x%lx", (int)ev->a0, (int)ev->a1, ev->a2);
+        break;
+    case __NR_dup:
+        off += snprintf(ev->desc + off, MAX_DESC_LEN - off, "oldfd=%d", (int)ev->a0);
+        break;
+    case __NR_dup3:
+        off += snprintf(ev->desc + off, MAX_DESC_LEN - off, "oldfd=%d newfd=%d flags=0x%lx", (int)ev->a0, (int)ev->a1, ev->a2);
+        break;
+    case __NR_splice:
+        off += snprintf(ev->desc + off, MAX_DESC_LEN - off, "fd_in=%d fd_out=%d len=%lu flags=0x%lx", (int)ev->a0, (int)ev->a2, ev->a4, ev->a5);
+        break;
+    case __NR_readahead:
+        off += snprintf(ev->desc + off, MAX_DESC_LEN - off, "fd=%d offset=%ld count=%lu", (int)ev->a0, (long)ev->a1, ev->a2);
+        break;
+    /* --- Network --- */
+    case __NR_socket:
+        off += snprintf(ev->desc + off, MAX_DESC_LEN - off, "domain=%d type=%d protocol=%d", (int)ev->a0, (int)ev->a1, (int)ev->a2);
+        break;
+    case __NR_bind:
+    case __NR_connect:
+        off += snprintf(ev->desc + off, MAX_DESC_LEN - off, "fd=%d addrlen=%d", (int)ev->a0, (int)ev->a2);
+        break;
+    case __NR_listen:
+        off += snprintf(ev->desc + off, MAX_DESC_LEN - off, "fd=%d backlog=%d", (int)ev->a0, (int)ev->a1);
+        break;
+    case __NR_accept:
+    case __NR_accept4:
+        off += snprintf(ev->desc + off, MAX_DESC_LEN - off, "fd=%d flags=0x%lx", (int)ev->a0, ev->a3);
+        break;
+    case __NR_sendto:
+        off += snprintf(ev->desc + off, MAX_DESC_LEN - off, "fd=%d len=%lu flags=0x%lx", (int)ev->a0, ev->a2, ev->a3);
+        break;
+    case __NR_recvfrom:
+        off += snprintf(ev->desc + off, MAX_DESC_LEN - off, "fd=%d len=%lu flags=0x%lx", (int)ev->a0, ev->a2, ev->a3);
+        break;
+    case __NR_setsockopt:
+        off += snprintf(ev->desc + off, MAX_DESC_LEN - off, "fd=%d level=%d optname=%d optlen=%d", (int)ev->a0, (int)ev->a1, (int)ev->a2, (int)ev->a4);
+        break;
+    case __NR_getsockopt:
+        off += snprintf(ev->desc + off, MAX_DESC_LEN - off, "fd=%d level=%d optname=%d", (int)ev->a0, (int)ev->a1, (int)ev->a2);
+        break;
+    case __NR_shutdown:
+        off += snprintf(ev->desc + off, MAX_DESC_LEN - off, "fd=%d how=%d", (int)ev->a0, (int)ev->a1);
+        break;
+    case __NR_sendmsg:
+    case __NR_recvmsg:
+        off += snprintf(ev->desc + off, MAX_DESC_LEN - off, "fd=%d flags=0x%lx", (int)ev->a0, ev->a2);
+        break;
+    case __NR_sendmmsg:
+        off += snprintf(ev->desc + off, MAX_DESC_LEN - off, "fd=%d vlen=%u flags=0x%lx", (int)ev->a0, (unsigned)ev->a2, ev->a3);
+        break;
+    case __NR_recvmmsg:
+        off += snprintf(ev->desc + off, MAX_DESC_LEN - off, "fd=%d vlen=%u flags=0x%lx", (int)ev->a0, (unsigned)ev->a2, ev->a3);
+        break;
+    case __NR_socketpair:
+        off += snprintf(ev->desc + off, MAX_DESC_LEN - off, "domain=%d type=%d protocol=%d", (int)ev->a0, (int)ev->a1, (int)ev->a2);
+        break;
+    /* --- Process --- */
+    case __NR_clone:
+        off += snprintf(ev->desc + off, MAX_DESC_LEN - off, "flags=0x%lx stack=0x%lx", ev->a0, ev->a1);
+        break;
+    case __NR_clone3:
+        off += snprintf(ev->desc + off, MAX_DESC_LEN - off, "args=0x%lx size=%lu", ev->a0, ev->a1);
+        break;
+    case __NR_execve: {
+        safe_copy_user_bytes(tmp, ev->a0, sizeof(tmp));
+        off += snprintf(ev->desc + off, MAX_DESC_LEN - off, "filename=\"%s\"", tmp);
+        break;
+    }
+    case __NR_execveat:
+        safe_copy_user_bytes(tmp, ev->a1, sizeof(tmp));
+        off += snprintf(ev->desc + off, MAX_DESC_LEN - off, "dfd=%d path=\"%s\" flags=0x%lx", (int)ev->a0, tmp, ev->a4);
+        break;
+    case __NR_exit:
+    case __NR_exit_group:
+        off += snprintf(ev->desc + off, MAX_DESC_LEN - off, "status=%d", (int)ev->a0);
+        break;
+    case __NR_wait4:
+        off += snprintf(ev->desc + off, MAX_DESC_LEN - off, "pid=%d options=0x%lx", (int)ev->a0, ev->a2);
+        break;
+    case __NR_waitid:
+        off += snprintf(ev->desc + off, MAX_DESC_LEN - off, "which=%d pid=%d options=0x%lx", (int)ev->a0, (int)ev->a1, ev->a3);
+        break;
+    case __NR_prctl:
+        off += snprintf(ev->desc + off, MAX_DESC_LEN - off, "option=%d arg2=0x%lx arg3=0x%lx", (int)ev->a0, ev->a1, ev->a2);
+        break;
+    case __NR_prlimit64:
+        off += snprintf(ev->desc + off, MAX_DESC_LEN - off, "pid=%d resource=%d", (int)ev->a0, (int)ev->a1);
+        break;
+    /* --- Signal --- */
+    case __NR_kill:
+        off += snprintf(ev->desc + off, MAX_DESC_LEN - off, "pid=%d sig=%d", (int)ev->a0, (int)ev->a1);
+        break;
+    case __NR_tkill:
+        off += snprintf(ev->desc + off, MAX_DESC_LEN - off, "tid=%d sig=%d", (int)ev->a0, (int)ev->a1);
+        break;
+    case __NR_tgkill:
+        off += snprintf(ev->desc + off, MAX_DESC_LEN - off, "tgid=%d tid=%d sig=%d", (int)ev->a0, (int)ev->a1, (int)ev->a2);
+        break;
+    case __NR_rt_sigaction:
+        off += snprintf(ev->desc + off, MAX_DESC_LEN - off, "sig=%d", (int)ev->a0);
+        break;
+    case __NR_rt_sigprocmask:
+        off += snprintf(ev->desc + off, MAX_DESC_LEN - off, "how=%d", (int)ev->a0);
+        break;
+    /* --- Memory --- */
+    case __NR_mmap:
+        off += snprintf(ev->desc + off, MAX_DESC_LEN - off, "addr=0x%lx len=%lu prot=0x%lx flags=0x%lx fd=%d offset=%ld",
+            ev->a0, ev->a1, ev->a2, ev->a3, (int)ev->a4, (long)ev->a5);
+        break;
+    case __NR_mprotect:
+        off += snprintf(ev->desc + off, MAX_DESC_LEN - off, "addr=0x%lx len=%lu prot=0x%lx", ev->a0, ev->a1, ev->a2);
+        break;
+    case __NR_munmap:
+        off += snprintf(ev->desc + off, MAX_DESC_LEN - off, "addr=0x%lx len=%lu", ev->a0, ev->a1);
+        break;
+    case __NR_mremap:
+        off += snprintf(ev->desc + off, MAX_DESC_LEN - off, "old_addr=0x%lx old_len=%lu new_len=%lu flags=0x%lx", ev->a0, ev->a1, ev->a2, ev->a3);
+        break;
+    case __NR_brk:
+        off += snprintf(ev->desc + off, MAX_DESC_LEN - off, "addr=0x%lx", ev->a0);
+        break;
+    case __NR_mlock:
+    case __NR_mlock2:
+        off += snprintf(ev->desc + off, MAX_DESC_LEN - off, "addr=0x%lx len=%lu", ev->a0, ev->a1);
+        break;
+    case __NR_munlock:
+        off += snprintf(ev->desc + off, MAX_DESC_LEN - off, "addr=0x%lx len=%lu", ev->a0, ev->a1);
+        break;
+    case __NR_madvise:
+        off += snprintf(ev->desc + off, MAX_DESC_LEN - off, "addr=0x%lx len=%lu advice=%d", ev->a0, ev->a1, (int)ev->a2);
+        break;
+    /* --- Tier2: mount/security/etc --- */
+    case __NR_mount: {
+        char dev[MAX_STR_LEN], tgt[MAX_STR_LEN], fs[64];
+        safe_copy_user_bytes(dev, ev->a0, sizeof(dev));
+        safe_copy_user_bytes(tgt, ev->a1, sizeof(tgt));
+        safe_copy_user_bytes(fs, ev->a2, sizeof(fs));
+        off += snprintf(ev->desc + off, MAX_DESC_LEN - off, "dev=\"%s\" target=\"%s\" fs=\"%s\" flags=0x%lx", dev, tgt, fs, ev->a3);
+        break;
+    }
+    case __NR_umount2:
+        safe_copy_user_bytes(tmp, ev->a0, sizeof(tmp));
+        off += snprintf(ev->desc + off, MAX_DESC_LEN - off, "target=\"%s\" flags=0x%lx", tmp, ev->a1);
+        break;
+    case __NR_ptrace:
+        off += snprintf(ev->desc + off, MAX_DESC_LEN - off, "request=%d pid=%d addr=0x%lx", (int)ev->a0, (int)ev->a1, ev->a2);
+        break;
+    case __NR_seccomp:
+        off += snprintf(ev->desc + off, MAX_DESC_LEN - off, "op=%d flags=0x%lx", (int)ev->a0, ev->a1);
+        break;
+    case __NR_init_module:
+        off += snprintf(ev->desc + off, MAX_DESC_LEN - off, "len=%lu", ev->a1);
+        break;
+    case __NR_finit_module:
+        off += snprintf(ev->desc + off, MAX_DESC_LEN - off, "fd=%d flags=0x%lx", (int)ev->a0, ev->a2);
+        break;
+    case __NR_delete_module:
+        safe_copy_user_bytes(tmp, ev->a0, sizeof(tmp));
+        off += snprintf(ev->desc + off, MAX_DESC_LEN - off, "name=\"%s\" flags=0x%lx", tmp, ev->a1);
+        break;
+    case __NR_bpf:
+        off += snprintf(ev->desc + off, MAX_DESC_LEN - off, "cmd=%d attr=0x%lx size=%u", (int)ev->a0, ev->a1, (unsigned)ev->a2);
+        break;
+    case __NR_setxattr:
+        safe_copy_user_bytes(tmp, ev->a0, sizeof(tmp));
+        off += snprintf(ev->desc + off, MAX_DESC_LEN - off, "path=\"%s\" size=%lu flags=0x%lx", tmp, ev->a3, ev->a4);
+        break;
+    case __NR_getxattr:
+        safe_copy_user_bytes(tmp, ev->a0, sizeof(tmp));
+        off += snprintf(ev->desc + off, MAX_DESC_LEN - off, "path=\"%s\" size=%lu", tmp, ev->a3);
+        break;
+    case __NR_removexattr:
+        safe_copy_user_bytes(tmp, ev->a0, sizeof(tmp));
+        off += snprintf(ev->desc + off, MAX_DESC_LEN - off, "path=\"%s\"", tmp);
+        break;
+    case __NR_utimensat:
+        safe_copy_user_bytes(tmp, ev->a1, sizeof(tmp));
+        off += snprintf(ev->desc + off, MAX_DESC_LEN - off, "dfd=%d path=\"%s\" flags=0x%lx", (int)ev->a0, tmp, ev->a3);
+        break;
+    case __NR_setns:
+        off += snprintf(ev->desc + off, MAX_DESC_LEN - off, "fd=%d nstype=0x%lx", (int)ev->a0, ev->a1);
+        break;
+    /* --- IPC --- */
+    case __NR_pipe2:
+        off += snprintf(ev->desc + off, MAX_DESC_LEN - off, "flags=0x%lx", ev->a1);
+        break;
+    case __NR_futex:
+        off += snprintf(ev->desc + off, MAX_DESC_LEN - off, "uaddr=0x%lx op=%d val=%d", ev->a0, (int)ev->a1, (int)ev->a2);
+        break;
+    case __NR_epoll_ctl:
+        off += snprintf(ev->desc + off, MAX_DESC_LEN - off, "epfd=%d op=%d fd=%d", (int)ev->a0, (int)ev->a1, (int)ev->a2);
+        break;
+    case __NR_epoll_pwait:
+        off += snprintf(ev->desc + off, MAX_DESC_LEN - off, "epfd=%d maxevents=%d timeout=%d", (int)ev->a0, (int)ev->a2, (int)ev->a3);
+        break;
+    case __NR_statx:
+        safe_copy_user_bytes(tmp, ev->a1, sizeof(tmp));
+        off += snprintf(ev->desc + off, MAX_DESC_LEN - off, "dfd=%d path=\"%s\" flags=0x%lx mask=0x%lx", (int)ev->a0, tmp, ev->a2, ev->a3);
+        break;
+    case __NR_openat2:
+        safe_copy_user_bytes(tmp, ev->a1, sizeof(tmp));
+        off += snprintf(ev->desc + off, MAX_DESC_LEN - off, "dfd=%d path=\"%s\"", (int)ev->a0, tmp);
+        break;
+    case __NR_io_uring_setup:
+        off += snprintf(ev->desc + off, MAX_DESC_LEN - off, "entries=%u", (unsigned)ev->a0);
+        break;
+    case __NR_io_uring_enter:
+        off += snprintf(ev->desc + off, MAX_DESC_LEN - off, "fd=%d to_submit=%u min_complete=%u flags=0x%lx", (int)ev->a0, (unsigned)ev->a1, (unsigned)ev->a2, ev->a3);
+        break;
+    case __NR_setuid:
+        off += snprintf(ev->desc + off, MAX_DESC_LEN - off, "uid=%d", (int)ev->a0);
+        break;
+    case __NR_setresuid:
+        off += snprintf(ev->desc + off, MAX_DESC_LEN - off, "ruid=%d euid=%d suid=%d", (int)ev->a0, (int)ev->a1, (int)ev->a2);
+        break;
+    case __NR_setresgid:
+        off += snprintf(ev->desc + off, MAX_DESC_LEN - off, "rgid=%d egid=%d sgid=%d", (int)ev->a0, (int)ev->a1, (int)ev->a2);
+        break;
+    case __NR_capget:
+    case __NR_capset:
+        off += snprintf(ev->desc + off, MAX_DESC_LEN - off, "header=0x%lx data=0x%lx", ev->a0, ev->a1);
+        break;
+    default:
+        off += snprintf(ev->desc + off, MAX_DESC_LEN - off, "a0=0x%lx a1=0x%lx a2=0x%lx", ev->a0, ev->a1, ev->a2);
+        break;
+    }
+    /* Tier2: caller address capture */
+    if (g_tier2_enabled && ev->caller_addr) {
+        /* caller already set in hook */
+    }
+    (void)off;
 }
 
 /* ================================================================
- * CTL0 command handler
+ * Unified syscall hook callback
+ * All 69 hooks (44 tier1 + 25 tier2) funnel into this function.
  * ================================================================ */
-static long svc_ctl0(const char *args, char *__user out_msg, int outlen)
+static void before_syscall(int nr, unsigned long a0, unsigned long a1,
+                           unsigned long a2, unsigned long a3,
+                           unsigned long a4, unsigned long a5)
 {
-    int n = 0;
-    char *buf = g_outbuf;
-    int blen = sizeof(g_outbuf);
-    char esc[DESC_BUF_SIZE + 256];
+    int pid, uid, idx;
+    struct svc_event *ev;
+    unsigned long *regs;
 
-    /* ---- status ---- */
-    if (!strcmp(args, "status")) {
-        int nr_logging = 0, i;
-        for (i = 0; i < MAX_NR; i++) {
-            if (bitmap_test(g_nr_bitmap, i)) nr_logging++;
-        }
-        n = snprintf(buf, blen,
-            "{\"ok\":true,\"version\":\"8.1.0\",\"enabled\":%s,"
-            "\"target_uid\":%d,\"hooks_installed\":%d,"
-            "\"nrs_logging\":%d,\"events_total\":%d,"
-            "\"events_buffered\":%d,\"tier2\":%s,"
-            "\"logging_nrs\":[",
-            g_enabled ? "true" : "false",
-            g_target_uid, g_hooks_installed,
-            nr_logging, g_ev_count,
-            g_ev_count < MAX_EVENTS ? g_ev_count : MAX_EVENTS,
-            g_tier2_loaded ? "true" : "false");
+    if (!g_enabled) return;
+    if (!bitmap_test(nr)) return;
 
-        int first = 1;
-        for (i = 0; i < MAX_NR; i++) {
-            if (bitmap_test(g_nr_bitmap, i)) {
-                if (!first) n += snprintf(buf + n, blen - n, ",");
-                n += snprintf(buf + n, blen - n, "%d", i);
-                first = 0;
-            }
-        }
-        n += snprintf(buf + n, blen - n, "],\"hooks\":[");
+    uid = get_current_uid();
+    if (g_uid_filter >= 0 && uid != g_uid_filter) return;
 
-        first = 1;
-        for (i = 0; i < (int)TIER1_COUNT; i++) {
-            if (tier1_hooks[i].active) {
-                if (!first) n += snprintf(buf + n, blen - n, ",");
-                n += snprintf(buf + n, blen - n, "{\"nr\":%d,\"name\":\"%s\",\"method\":\"%s\"}",
-                    tier1_hooks[i].nr, get_syscall_name(tier1_hooks[i].nr),
-                    tier1_hooks[i].method == HOOK_INLINE ? "inline" : "fp");
-                first = 0;
-            }
+    pid = get_current_pid();
+
+    idx = g_head;
+    g_head = (g_head + 1) % MAX_EVENTS;
+    if (g_count >= MAX_EVENTS)
+        g_tail = (g_tail + 1) % MAX_EVENTS;
+    else
+        g_count++;
+    g_total++;
+
+    ev = &g_events[idx];
+    ev->seq = g_seq++;
+    ev->nr = nr;
+    ev->pid = pid;
+    ev->uid = uid;
+    get_current_comm(ev->comm, TASK_COMM_LEN);
+    ev->a0 = a0; ev->a1 = a1; ev->a2 = a2;
+    ev->a3 = a3; ev->a4 = a4; ev->a5 = a5;
+    ev->caller_addr = 0;
+    ev->pc = 0;
+    ev->clone_fn = 0;
+    ev->fd_path[0] = 0;
+
+    /* Capture PC and caller (tier2) from pt_regs */
+    regs = get_pt_regs();
+    if (regs) {
+        ev->pc = regs[REG_PC];
+        if (g_tier2_enabled) {
+            /* x30 (LR) is at index 30 */
+            ev->caller_addr = regs[30];
         }
-        for (i = 0; i < (int)TIER2_COUNT; i++) {
-            if (tier2_hooks[i].active) {
-                if (!first) n += snprintf(buf + n, blen - n, ",");
-                n += snprintf(buf + n, blen - n, "{\"nr\":%d,\"name\":\"%s\",\"method\":\"%s\"}",
-                    tier2_hooks[i].nr, get_syscall_name(tier2_hooks[i].nr),
-                    tier2_hooks[i].method == HOOK_INLINE ? "inline" : "fp");
-                first = 0;
-            }
-        }
-        n += snprintf(buf + n, blen - n, "]}");
     }
 
-    /* ---- uid <n> ---- */
-    else if (!strncmp(args, "uid ", 4)) {
-        g_target_uid = parse_int(args + 4, 0);
-        n = snprintf(buf, blen, "{\"ok\":true,\"target_uid\":%d}", g_target_uid);
+    /* Tier2: fd-to-path for fd-based syscalls */
+    if (g_tier2_enabled) {
+        int fd = -1;
+        switch (nr) {
+        case __NR_read: case __NR_write: case __NR_readv: case __NR_writev:
+        case __NR_pread64: case __NR_pwrite64: case __NR_lseek:
+        case __NR_fstat: case __NR_fsync: case __NR_fdatasync:
+        case __NR_ftruncate: case __NR_fchmod: case __NR_fchown:
+        case __NR_ioctl: case __NR_fcntl: case __NR_getdents64:
+        case __NR_close:
+            fd = (int)a0;
+            break;
+        case __NR_sendto: case __NR_recvfrom:
+        case __NR_setsockopt: case __NR_getsockopt:
+        case __NR_sendmsg: case __NR_recvmsg:
+        case __NR_shutdown: case __NR_bind: case __NR_connect:
+        case __NR_listen: case __NR_accept: case __NR_accept4:
+            fd = (int)a0;
+            break;
+        default: break;
+        }
+        if (fd >= 0) {
+            /* Resolve fd via /proc/self/fd/N using readlinkat syscall */
+            char fdpath[32];
+            int plen = 0;
+            fdpath[0] = '/'; fdpath[1] = 'p'; fdpath[2] = 'r'; fdpath[3] = 'o';
+            fdpath[4] = 'c'; fdpath[5] = '/'; fdpath[6] = 's'; fdpath[7] = 'e';
+            fdpath[8] = 'l'; fdpath[9] = 'f'; fdpath[10] = '/'; fdpath[11] = 'f';
+            fdpath[12] = 'd'; fdpath[13] = '/';
+            plen = 14;
+            /* int to string for fd */
+            {
+                char digits[12];
+                int dlen = 0, fv = fd < 0 ? -fd : fd;
+                if (fv == 0) { digits[dlen++] = '0'; }
+                else { while (fv > 0 && dlen < 10) { digits[dlen++] = '0' + (fv % 10); fv /= 10; } }
+                if (fd < 0) fdpath[plen++] = '-';
+                while (dlen > 0) fdpath[plen++] = digits[--dlen];
+                fdpath[plen] = 0;
+            }
+            {
+                long rlen = raw_syscall4(__NR_readlinkat, -100,
+                    (unsigned long)fdpath, (unsigned long)ev->fd_path, MAX_PATH_LEN - 1);
+                if (rlen > 0 && rlen < MAX_PATH_LEN) ev->fd_path[rlen] = 0;
+                else ev->fd_path[0] = 0;
+            }
+        }
     }
 
-    /* ---- enable ---- */
-    else if (!strcmp(args, "enable") || !strcmp(args, "resume") || !strcmp(args, "start")) {
+    deep_parse_args(ev);
+}
+
+/* ================================================================
+ * HOOK_ENTRY macros -- generate hook functions for each syscall
+ * ================================================================ */
+#define HOOK_ENTRY(NR) \
+    static void before_##NR(hook_fargs6_t *args, void *udata) { \
+        (void)udata; \
+        before_syscall(NR, args->arg0, args->arg1, args->arg2, \
+                       args->arg3, args->arg4, args->arg5); \
+    }
+
+/* Tier1 hooks */
+HOOK_ENTRY(56)  HOOK_ENTRY(57)  HOOK_ENTRY(63)  HOOK_ENTRY(64)
+HOOK_ENTRY(35)  HOOK_ENTRY(34)  HOOK_ENTRY(53)  HOOK_ENTRY(54)
+HOOK_ENTRY(48)  HOOK_ENTRY(78)  HOOK_ENTRY(79)  HOOK_ENTRY(80)
+HOOK_ENTRY(82)  HOOK_ENTRY(83)  HOOK_ENTRY(62)  HOOK_ENTRY(61)
+HOOK_ENTRY(67)  HOOK_ENTRY(68)  HOOK_ENTRY(65)  HOOK_ENTRY(66)
+HOOK_ENTRY(45)  HOOK_ENTRY(46)  HOOK_ENTRY(47)  HOOK_ENTRY(29)
+HOOK_ENTRY(25)  HOOK_ENTRY(23)  HOOK_ENTRY(24)
+HOOK_ENTRY(198) HOOK_ENTRY(200) HOOK_ENTRY(201) HOOK_ENTRY(202)
+HOOK_ENTRY(203) HOOK_ENTRY(206) HOOK_ENTRY(207) HOOK_ENTRY(208)
+HOOK_ENTRY(209) HOOK_ENTRY(210) HOOK_ENTRY(211) HOOK_ENTRY(212)
+HOOK_ENTRY(220) HOOK_ENTRY(221) HOOK_ENTRY(129) HOOK_ENTRY(131)
+HOOK_ENTRY(222)
+/* Tier2 hooks */
+HOOK_ENTRY(40)  HOOK_ENTRY(39)  HOOK_ENTRY(76)  HOOK_ENTRY(71)
+HOOK_ENTRY(117) HOOK_ENTRY(167) HOOK_ENTRY(261) HOOK_ENTRY(277)
+HOOK_ENTRY(105) HOOK_ENTRY(106) HOOK_ENTRY(273) HOOK_ENTRY(280)
+HOOK_ENTRY(281) HOOK_ENTRY(226) HOOK_ENTRY(233) HOOK_ENTRY(214)
+HOOK_ENTRY(215) HOOK_ENTRY(216) HOOK_ENTRY(228) HOOK_ENTRY(229)
+HOOK_ENTRY(5)   HOOK_ENTRY(8)   HOOK_ENTRY(14)  HOOK_ENTRY(88)
+HOOK_ENTRY(435)
+
+/* ================================================================
+ * Hook install/remove helpers
+ * ================================================================ */
+static int install_hook(int nr) {
+    switch (nr) {
+#define CASE_HOOK(N) case N: return hook_syscalln(N, 6, before_##N, 0, 0)
+    CASE_HOOK(56); CASE_HOOK(57); CASE_HOOK(63); CASE_HOOK(64);
+    CASE_HOOK(35); CASE_HOOK(34); CASE_HOOK(53); CASE_HOOK(54);
+    CASE_HOOK(48); CASE_HOOK(78); CASE_HOOK(79); CASE_HOOK(80);
+    CASE_HOOK(82); CASE_HOOK(83); CASE_HOOK(62); CASE_HOOK(61);
+    CASE_HOOK(67); CASE_HOOK(68); CASE_HOOK(65); CASE_HOOK(66);
+    CASE_HOOK(45); CASE_HOOK(46); CASE_HOOK(47); CASE_HOOK(29);
+    CASE_HOOK(25); CASE_HOOK(23); CASE_HOOK(24);
+    CASE_HOOK(198); CASE_HOOK(200); CASE_HOOK(201); CASE_HOOK(202);
+    CASE_HOOK(203); CASE_HOOK(206); CASE_HOOK(207); CASE_HOOK(208);
+    CASE_HOOK(209); CASE_HOOK(210); CASE_HOOK(211); CASE_HOOK(212);
+    CASE_HOOK(220); CASE_HOOK(221); CASE_HOOK(129); CASE_HOOK(131);
+    CASE_HOOK(222);
+    CASE_HOOK(40); CASE_HOOK(39); CASE_HOOK(76); CASE_HOOK(71);
+    CASE_HOOK(117); CASE_HOOK(167); CASE_HOOK(261); CASE_HOOK(277);
+    CASE_HOOK(105); CASE_HOOK(106); CASE_HOOK(273); CASE_HOOK(280);
+    CASE_HOOK(281); CASE_HOOK(226); CASE_HOOK(233); CASE_HOOK(214);
+    CASE_HOOK(215); CASE_HOOK(216); CASE_HOOK(228); CASE_HOOK(229);
+    CASE_HOOK(5); CASE_HOOK(8); CASE_HOOK(14); CASE_HOOK(88);
+    CASE_HOOK(435);
+#undef CASE_HOOK
+    default: return -1;
+    }
+}
+
+static void remove_hook(int nr) {
+    switch (nr) {
+#define CASE_UNHOOK(N) case N: unhook_syscalln(N, before_##N, 0); break
+    CASE_UNHOOK(56); CASE_UNHOOK(57); CASE_UNHOOK(63); CASE_UNHOOK(64);
+    CASE_UNHOOK(35); CASE_UNHOOK(34); CASE_UNHOOK(53); CASE_UNHOOK(54);
+    CASE_UNHOOK(48); CASE_UNHOOK(78); CASE_UNHOOK(79); CASE_UNHOOK(80);
+    CASE_UNHOOK(82); CASE_UNHOOK(83); CASE_UNHOOK(62); CASE_UNHOOK(61);
+    CASE_UNHOOK(67); CASE_UNHOOK(68); CASE_UNHOOK(65); CASE_UNHOOK(66);
+    CASE_UNHOOK(45); CASE_UNHOOK(46); CASE_UNHOOK(47); CASE_UNHOOK(29);
+    CASE_UNHOOK(25); CASE_UNHOOK(23); CASE_UNHOOK(24);
+    CASE_UNHOOK(198); CASE_UNHOOK(200); CASE_UNHOOK(201); CASE_UNHOOK(202);
+    CASE_UNHOOK(203); CASE_UNHOOK(206); CASE_UNHOOK(207); CASE_UNHOOK(208);
+    CASE_UNHOOK(209); CASE_UNHOOK(210); CASE_UNHOOK(211); CASE_UNHOOK(212);
+    CASE_UNHOOK(220); CASE_UNHOOK(221); CASE_UNHOOK(129); CASE_UNHOOK(131);
+    CASE_UNHOOK(222);
+    CASE_UNHOOK(40); CASE_UNHOOK(39); CASE_UNHOOK(76); CASE_UNHOOK(71);
+    CASE_UNHOOK(117); CASE_UNHOOK(167); CASE_UNHOOK(261); CASE_UNHOOK(277);
+    CASE_UNHOOK(105); CASE_UNHOOK(106); CASE_UNHOOK(273); CASE_UNHOOK(280);
+    CASE_UNHOOK(281); CASE_UNHOOK(226); CASE_UNHOOK(233); CASE_UNHOOK(214);
+    CASE_UNHOOK(215); CASE_UNHOOK(216); CASE_UNHOOK(228); CASE_UNHOOK(229);
+    CASE_UNHOOK(5); CASE_UNHOOK(8); CASE_UNHOOK(14); CASE_UNHOOK(88);
+    CASE_UNHOOK(435);
+#undef CASE_UNHOOK
+    default: break;
+    }
+}
+
+static int g_tier1_hooked = 0;
+static int g_tier2_hooked = 0;
+
+static void install_tier1(void) {
+    unsigned int i;
+    if (g_tier1_hooked) return;
+    for (i = 0; i < TIER1_COUNT; i++)
+        install_hook(tier1_nrs[i]);
+    g_tier1_hooked = 1;
+    printk("svc_monitor: tier1 hooks installed (%u)\n", (unsigned)TIER1_COUNT);
+}
+
+static void remove_tier1(void) {
+    unsigned int i;
+    if (!g_tier1_hooked) return;
+    for (i = 0; i < TIER1_COUNT; i++)
+        remove_hook(tier1_nrs[i]);
+    g_tier1_hooked = 0;
+    printk("svc_monitor: tier1 hooks removed\n");
+}
+
+static void install_tier2(void) {
+    unsigned int i;
+    if (g_tier2_hooked) return;
+    for (i = 0; i < TIER2_COUNT; i++)
+        install_hook(tier2_nrs[i]);
+    g_tier2_hooked = 1;
+    g_tier2_enabled = 1;
+    printk("svc_monitor: tier2 hooks installed (%u)\n", (unsigned)TIER2_COUNT);
+}
+
+static void remove_tier2(void) {
+    unsigned int i;
+    if (!g_tier2_hooked) return;
+    for (i = 0; i < TIER2_COUNT; i++)
+        remove_hook(tier2_nrs[i]);
+    g_tier2_hooked = 0;
+    g_tier2_enabled = 0;
+    printk("svc_monitor: tier2 hooks removed\n");
+}
+
+/* ================================================================
+ * Command: drain events as JSON
+ * ================================================================ */
+static int drain_events(void) {
+    int i, off = 0, cnt;
+    char esc1[TASK_COMM_LEN * 2 + 4];
+    char esc2[MAX_DESC_LEN * 2 + 4];
+    char esc3[MAX_PATH_LEN * 2 + 4];
+    cnt = g_count;
+    off += snprintf(g_outbuf + off, OUTBUF_SIZE - off, "{\"ok\":true,\"events\":[");
+    for (i = 0; i < cnt && off < OUTBUF_SIZE - 1024; i++) {
+        int ei = (g_tail + i) % MAX_EVENTS;
+        struct svc_event *ev = &g_events[ei];
+        json_escape(esc1, sizeof(esc1), ev->comm);
+        json_escape(esc2, sizeof(esc2), ev->desc);
+        json_escape(esc3, sizeof(esc3), ev->fd_path);
+        off += snprintf(g_outbuf + off, OUTBUF_SIZE - off,
+            "%s{\"seq\":%lu,\"nr\":%d,\"name\":\"%s\",\"pid\":%d,\"uid\":%d,"
+            "\"comm\":\"%s\",\"a0\":%lu,\"a1\":%lu,\"a2\":%lu,"
+            "\"a3\":%lu,\"a4\":%lu,\"a5\":%lu,"
+            "\"desc\":\"%s\",\"caller\":\"0x%lx\",\"pc\":\"0x%lx\","
+            "\"fdPath\":\"%s\",\"cloneFn\":%lu}",
+            i ? "," : "",
+            ev->seq, ev->nr, nr_to_name(ev->nr), ev->pid, ev->uid,
+            esc1, ev->a0, ev->a1, ev->a2, ev->a3, ev->a4, ev->a5,
+            esc2, ev->caller_addr, ev->pc, esc3, ev->clone_fn);
+    }
+    off += snprintf(g_outbuf + off, OUTBUF_SIZE - off, "],\"total\":%lu,\"drained\":%d}", g_total, i);
+    g_head = 0; g_tail = 0; g_count = 0;
+    return write_output_file(OUTPUT_PATH, g_outbuf, off);
+}
+
+/* ================================================================
+ * Command: status JSON
+ * ================================================================ */
+static int output_status(void) {
+    int off = 0;
+    char nrlist[4096];
+    bitmap_list(nrlist, sizeof(nrlist));
+    off += snprintf(g_outbuf + off, OUTBUF_SIZE - off,
+        "{\"ok\":true,\"enabled\":%d,\"uid\":%d,\"tier2\":%d,"
+        "\"eventsTotal\":%lu,\"eventsBuffered\":%d,"
+        "\"nrFilter\":\"%s\",\"tier1Hooked\":%d,\"tier2Hooked\":%d,"
+        "\"version\":\"8.3.0\"}",
+        g_enabled, g_uid_filter, g_tier2_enabled,
+        g_total, g_count, nrlist, g_tier1_hooked, g_tier2_hooked);
+    return write_output_file(OUTPUT_PATH, g_outbuf, off);
+}
+
+/* ================================================================
+ * Command: apply preset
+ * ================================================================ */
+static int apply_preset(int preset_id) {
+    int pi, i;
+    if (preset_id == 9) {
+        /* all */
+        bitmap_set_all();
+        if (!g_tier2_hooked) install_tier2();
+        return 0;
+    }
+    for (pi = 0; presets[pi].id; pi++) {
+        if (presets[pi].id == preset_id) {
+            bitmap_clear_all();
+            for (i = 0; i < presets[pi].count; i++)
+                bitmap_set(presets[pi].nrs[i]);
+            return 0;
+        }
+    }
+    return -1;
+}
+
+/* ================================================================
+ * Simple string-to-int
+ * ================================================================ */
+static int str_to_int(const char *s) {
+    int val = 0, neg = 0;
+    if (!s) return 0;
+    while (*s == ' ') s++;
+    if (*s == '-') { neg = 1; s++; }
+    while (*s >= '0' && *s <= '9') {
+        val = val * 10 + (*s - '0');
+        s++;
+    }
+    return neg ? -val : val;
+}
+
+/* ================================================================
+ * Simple command argument parser
+ * Finds the first space after command name, returns pointer to args
+ * ================================================================ */
+static const char *cmd_args(const char *cmd, const char *prefix) {
+    int plen = strlen(prefix);
+    if (strncmp(cmd, prefix, plen) != 0) return 0;
+    if (cmd[plen] == 0) return cmd + plen;
+    if (cmd[plen] == ' ') return cmd + plen + 1;
+    return 0;
+}
+
+/* ================================================================
+ * KPM_CTL0 -- command dispatcher
+ * ================================================================ */
+__attribute__((used))
+static long svc_ctl0(const char *args, char *__user out_msg, int outlen) {
+    int off, i, cnt;
+    const char *p;
+
+    if (!args) return -1;
+
+    /* enable */
+    if (strcmp(args, "enable") == 0) {
+        if (!g_tier1_hooked) install_tier1();
         g_enabled = 1;
-        n = snprintf(buf, blen, "{\"ok\":true,\"enabled\":true}");
+        off = snprintf(g_outbuf, OUTBUF_SIZE, "{\"ok\":true,\"msg\":\"enabled\"}");
+        write_output_file(OUTPUT_PATH, g_outbuf, off);
+        return 0;
     }
-
-    /* ---- disable ---- */
-    else if (!strcmp(args, "disable") || !strcmp(args, "pause") || !strcmp(args, "stop")) {
+    /* disable */
+    if (strcmp(args, "disable") == 0) {
         g_enabled = 0;
-        n = snprintf(buf, blen, "{\"ok\":true,\"enabled\":false}");
+        off = snprintf(g_outbuf, OUTBUF_SIZE, "{\"ok\":true,\"msg\":\"disabled\"}");
+        write_output_file(OUTPUT_PATH, g_outbuf, off);
+        return 0;
     }
-
-    /* ---- enable_nr <n> ---- */
-    else if (!strncmp(args, "enable_nr ", 10)) {
-        int nr = parse_int(args + 10, 0);
-        bitmap_set(g_nr_bitmap, nr);
-        n = snprintf(buf, blen, "{\"ok\":true,\"enabled_nr\":%d}", nr);
+    /* status */
+    if (strcmp(args, "status") == 0) {
+        output_status();
+        return 0;
     }
-
-    /* ---- disable_nr <n> ---- */
-    else if (!strncmp(args, "disable_nr ", 11)) {
-        int nr = parse_int(args + 11, 0);
-        bitmap_clear(g_nr_bitmap, nr);
-        n = snprintf(buf, blen, "{\"ok\":true,\"disabled_nr\":%d}", nr);
+    /* drain */
+    if (strcmp(args, "drain") == 0) {
+        drain_events();
+        return 0;
     }
-
-    /* ---- set_nrs <n1>,<n2>,... ---- */
-    else if (!strncmp(args, "set_nrs ", 8)) {
-        int i;
-        const char *p = args + 8;
-        int cnt = 0;
-        for (i = 0; i < BITMAP_LONGS; i++)
-            g_nr_bitmap[i] = 0;
+    /* clear */
+    if (strcmp(args, "clear") == 0) {
+        g_head = 0; g_tail = 0; g_count = 0;
+        off = snprintf(g_outbuf, OUTBUF_SIZE, "{\"ok\":true,\"msg\":\"cleared\"}");
+        write_output_file(OUTPUT_PATH, g_outbuf, off);
+        return 0;
+    }
+    /* uid <N> */
+    p = cmd_args(args, "uid");
+    if (p) {
+        g_uid_filter = str_to_int(p);
+        off = snprintf(g_outbuf, OUTBUF_SIZE, "{\"ok\":true,\"uid\":%d}", g_uid_filter);
+        write_output_file(OUTPUT_PATH, g_outbuf, off);
+        return 0;
+    }
+    /* enable_nr <N> */
+    p = cmd_args(args, "enable_nr");
+    if (p) {
+        int nr = str_to_int(p);
+        bitmap_set(nr);
+        off = snprintf(g_outbuf, OUTBUF_SIZE, "{\"ok\":true,\"enabled_nr\":%d}", nr);
+        write_output_file(OUTPUT_PATH, g_outbuf, off);
+        return 0;
+    }
+    /* disable_nr <N> */
+    p = cmd_args(args, "disable_nr");
+    if (p) {
+        int nr = str_to_int(p);
+        bitmap_clear(nr);
+        off = snprintf(g_outbuf, OUTBUF_SIZE, "{\"ok\":true,\"disabled_nr\":%d}", nr);
+        write_output_file(OUTPUT_PATH, g_outbuf, off);
+        return 0;
+    }
+    /* set_nrs <n1,n2,...> */
+    p = cmd_args(args, "set_nrs");
+    if (p) {
+        int nr;
+        bitmap_clear_all();
         while (*p) {
             while (*p == ' ' || *p == ',') p++;
-            if (*p == '\0') break;
-            int consumed = 0;
-            int nr = parse_int(p, &consumed);
-            if (consumed > 0) {
-                bitmap_set(g_nr_bitmap, nr);
-                cnt++;
-                p += consumed;
-            } else {
-                p++;
-            }
+            if (*p == 0) break;
+            nr = 0;
+            while (*p >= '0' && *p <= '9') { nr = nr * 10 + (*p - '0'); p++; }
+            bitmap_set(nr);
         }
-        n = snprintf(buf, blen, "{\"ok\":true,\"set_nrs_count\":%d}", cnt);
+        off = snprintf(g_outbuf, OUTBUF_SIZE, "{\"ok\":true,\"msg\":\"nrs_set\"}");
+        write_output_file(OUTPUT_PATH, g_outbuf, off);
+        return 0;
     }
-
-    /* ---- enable_all ---- */
-    else if (!strcmp(args, "enable_all")) {
-        int i;
-        for (i = 0; i < (int)TIER1_COUNT; i++)
-            if (tier1_hooks[i].active) bitmap_set(g_nr_bitmap, tier1_hooks[i].nr);
-        for (i = 0; i < (int)TIER2_COUNT; i++)
-            if (tier2_hooks[i].active) bitmap_set(g_nr_bitmap, tier2_hooks[i].nr);
-        n = snprintf(buf, blen, "{\"ok\":true}");
+    /* enable_all_nr */
+    if (strcmp(args, "enable_all_nr") == 0) {
+        bitmap_set_all();
+        off = snprintf(g_outbuf, OUTBUF_SIZE, "{\"ok\":true,\"msg\":\"all_enabled\"}");
+        write_output_file(OUTPUT_PATH, g_outbuf, off);
+        return 0;
     }
-
-    /* ---- disable_all ---- */
-    else if (!strcmp(args, "disable_all")) {
-        int i;
-        for (i = 0; i < BITMAP_LONGS; i++)
-            g_nr_bitmap[i] = 0;
-        n = snprintf(buf, blen, "{\"ok\":true}");
+    /* disable_all_nr */
+    if (strcmp(args, "disable_all_nr") == 0) {
+        bitmap_clear_all();
+        off = snprintf(g_outbuf, OUTBUF_SIZE, "{\"ok\":true,\"msg\":\"all_disabled\"}");
+        write_output_file(OUTPUT_PATH, g_outbuf, off);
+        return 0;
     }
-
-    /* ---- preset <name> ---- */
-    else if (!strncmp(args, "preset ", 7)) {
-        apply_preset(args + 7);
-        n = snprintf(buf, blen, "{\"ok\":true,\"preset\":\"%s\"}", args + 7);
-    }
-
-    /* ---- tier2 on/off ---- */
-    else if (!strcmp(args, "tier2 on")) {
-        if (!g_tier2_loaded) install_tier2();
-        n = snprintf(buf, blen, "{\"ok\":true,\"tier2\":true}");
-    }
-    else if (!strcmp(args, "tier2 off")) {
-        if (g_tier2_loaded) remove_tier2();
-        n = snprintf(buf, blen, "{\"ok\":true,\"tier2\":false}");
-    }
-
-    /* ---- drain <max> ---- */
-    else if (!strncmp(args, "drain ", 6) || !strcmp(args, "drain")) {
-        int max = 50;
-        if (!strncmp(args, "drain ", 6)) max = parse_int(args + 6, 0);
-        if (max <= 0) max = 50;
-        if (max > MAX_EVENTS) max = MAX_EVENTS;
-
-        int avail = g_ev_count < MAX_EVENTS ? g_ev_count : MAX_EVENTS;
-        int count = avail < max ? avail : max;
-        int start;
-
-        n = snprintf(buf, blen, "{\"ok\":true,\"count\":%d,\"total\":%d,\"events\":[", count, g_ev_count);
-
-        if (count > 0) {
-            start = (g_ev_head - avail + MAX_EVENTS) % MAX_EVENTS;
-            int skip = avail - count;
-            start = (start + skip) % MAX_EVENTS;
-
-            int i;
-            for (i = 0; i < count && n < blen - 2048; i++) {
-                int idx = (start + i) % MAX_EVENTS;
-                svc_event_t *ev = &g_events[idx];
-                json_escape(esc, sizeof(esc), ev->desc);
-
-                if (i > 0) n += snprintf(buf + n, blen - n, ",");
-                n += snprintf(buf + n, blen - n,
-                    "{\"nr\":%d,\"name\":\"%s\",\"pid\":%d,\"uid\":%d,"
-                    "\"comm\":\"%s\",\"a0\":%lu,\"a1\":%lu,\"a2\":%lu,"
-                    "\"a3\":%lu,\"a4\":%lu,\"a5\":%lu,\"desc\":\"%s\"}",
-                    ev->nr, get_syscall_name(ev->nr), ev->pid, ev->uid,
-                    ev->comm, ev->a0, ev->a1, ev->a2,
-                    ev->a3, ev->a4, ev->a5, esc);
-            }
+    /* preset <1-9> */
+    p = cmd_args(args, "preset");
+    if (p) {
+        int pid = str_to_int(p);
+        if (apply_preset(pid) == 0) {
+            off = snprintf(g_outbuf, OUTBUF_SIZE, "{\"ok\":true,\"preset\":%d}", pid);
+        } else {
+            off = snprintf(g_outbuf, OUTBUF_SIZE, "{\"ok\":false,\"error\":\"invalid preset\"}");
         }
-        n += snprintf(buf + n, blen - n, "]}");
-
-        g_ev_head = 0;
-        g_ev_count = 0;
+        write_output_file(OUTPUT_PATH, g_outbuf, off);
+        return 0;
     }
-
-    /* ---- events ---- */
-    else if (!strcmp(args, "events")) {
-        return svc_ctl0("drain 50", out_msg, outlen);
+    /* tier2 <0|1> */
+    p = cmd_args(args, "tier2");
+    if (p) {
+        int val = str_to_int(p);
+        if (val && !g_tier2_hooked) install_tier2();
+        else if (!val && g_tier2_hooked) remove_tier2();
+        off = snprintf(g_outbuf, OUTBUF_SIZE, "{\"ok\":true,\"tier2\":%d}", g_tier2_enabled);
+        write_output_file(OUTPUT_PATH, g_outbuf, off);
+        return 0;
     }
-
-    /* ---- clear ---- */
-    else if (!strcmp(args, "clear")) {
-        g_ev_head = 0;
-        g_ev_count = 0;
-        n = snprintf(buf, blen, "{\"ok\":true,\"cleared\":true}");
-    }
-
-    /* ---- unknown ---- */
-    else {
-        n = snprintf(buf, blen, "{\"ok\":false,\"error\":\"unknown command: %s\"}", args);
-    }
-
-    /* Write to output file */
-    if (n > 0) {
-        write_output_file(buf, n);
-    }
-
-    /* Also copy to out_msg if possible */
-    if (out_msg && outlen > 0) {
-        int copy = n < outlen - 1 ? n : outlen - 1;
-        if (copy > 0) {
-            compat_copy_to_user(out_msg, buf, copy);
+    /* events (non-draining peek) */
+    if (strcmp(args, "events") == 0) {
+        char esc1[TASK_COMM_LEN * 2 + 4];
+        char esc2[MAX_DESC_LEN * 2 + 4];
+        char esc3[MAX_PATH_LEN * 2 + 4];
+        cnt = g_count; off = 0;
+        off += snprintf(g_outbuf + off, OUTBUF_SIZE - off, "{\"ok\":true,\"events\":[");
+        for (i = 0; i < cnt && off < OUTBUF_SIZE - 1024; i++) {
+            int ei = (g_tail + i) % MAX_EVENTS;
+            struct svc_event *ev = &g_events[ei];
+            json_escape(esc1, sizeof(esc1), ev->comm);
+            json_escape(esc2, sizeof(esc2), ev->desc);
+            json_escape(esc3, sizeof(esc3), ev->fd_path);
+            off += snprintf(g_outbuf + off, OUTBUF_SIZE - off,
+                "%s{\"seq\":%lu,\"nr\":%d,\"name\":\"%s\",\"pid\":%d,\"uid\":%d,"
+                "\"comm\":\"%s\",\"a0\":%lu,\"a1\":%lu,\"a2\":%lu,"
+                "\"a3\":%lu,\"a4\":%lu,\"a5\":%lu,"
+                "\"desc\":\"%s\",\"caller\":\"0x%lx\",\"pc\":\"0x%lx\","
+                "\"fdPath\":\"%s\",\"cloneFn\":%lu}",
+                i ? "," : "",
+                ev->seq, ev->nr, nr_to_name(ev->nr), ev->pid, ev->uid,
+                esc1, ev->a0, ev->a1, ev->a2, ev->a3, ev->a4, ev->a5,
+                esc2, ev->caller_addr, ev->pc, esc3, ev->clone_fn);
         }
+        off += snprintf(g_outbuf + off, OUTBUF_SIZE - off, "],\"total\":%lu,\"buffered\":%d}", g_total, cnt);
+        write_output_file(OUTPUT_PATH, g_outbuf, off);
+        return 0;
     }
-
+    off = snprintf(g_outbuf, OUTBUF_SIZE, "{\"ok\":false,\"error\":\"unknown command\"}");
+    write_output_file(OUTPUT_PATH, g_outbuf, off);
     return 0;
 }
 
 /* ================================================================
- * Module init / exit
+ * KPM entry points
  * ================================================================ */
-static long svc_init(const char *args, const char *event, void *__user reserved)
-{
-    int ok;
-    printk("svc_monitor v8.1.0: init, installing hooks...\n");
-
+__attribute__((used))
+static long svc_init(const char *args, const char *event, void *reserved) {
+    unsigned long i;
+    volatile char *p;
+    printk("svc_monitor: v8.3.0 loaded\n");
+    p = (volatile char *)g_events;
+    for (i = 0; i < sizeof(g_events); i++) p[i] = 0;
+    p = (volatile char *)g_nr_bitmap;
+    for (i = 0; i < sizeof(g_nr_bitmap); i++) p[i] = 0;
+    g_head = 0; g_tail = 0; g_count = 0;
+    g_total = 0; g_seq = 0;
     g_enabled = 0;
-    g_target_uid = -1;
-    g_ev_head = 0;
-    g_ev_count = 0;
-    g_hooks_installed = 0;
-    g_tier2_loaded = 0;
-
-    ok = install_tier1();
-    printk("svc_monitor: tier1 installed %d/%d hooks\n", ok, (int)TIER1_COUNT);
-
-    apply_preset("re_basic");
-    printk("svc_monitor: ready, g_enabled=0 (waiting for APP)\n");
+    g_uid_filter = -1;
+    g_tier2_enabled = 0;
+    g_tier1_hooked = 0;
+    g_tier2_hooked = 0;
     return 0;
 }
 
-static long svc_exit(void *__user reserved)
-{
-    int i;
-    printk("svc_monitor: exit, removing hooks...\n");
+__attribute__((used))
+static long svc_exit(void *reserved) {
     g_enabled = 0;
-
-    if (g_tier2_loaded) {
-        for (i = 0; i < (int)TIER2_COUNT; i++)
-            remove_hook(&tier2_hooks[i]);
-        g_tier2_loaded = 0;
-    }
-
-    for (i = 0; i < (int)TIER1_COUNT; i++)
-        remove_hook(&tier1_hooks[i]);
-
-    printk("svc_monitor: all hooks removed\n");
+    if (g_tier2_hooked) remove_tier2();
+    if (g_tier1_hooked) remove_tier1();
+    printk("svc_monitor: unloaded\n");
     return 0;
 }
 

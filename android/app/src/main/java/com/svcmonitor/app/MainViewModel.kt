@@ -1,373 +1,230 @@
 package com.svcmonitor.app
 
-import android.util.Log
+import android.app.Application
+import android.os.Handler
+import android.os.Looper
+import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.LiveData
 import androidx.lifecycle.MutableLiveData
-import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
 /**
- * MainViewModel v8.0.1 — Filter control + monitoring on/off + status polling.
- *
- * Key design:
- *   - Module loads with g_enabled=0 (paused)
- *   - APP sends "enable" to start monitoring, "disable" to stop
- *   - APP controls filter via uid/set_nrs/preset commands
- *   - Polling paused during command execution to avoid race
- *
- * FIX: More robust error handling in startMonitoring flow.
- *   - Don't abort the entire flow on non-critical step failure
- *   - Log all command results for debugging
+ * MainViewModel -- state holder for SVCMonitor v8.3.
+ * Uses viewModelScope + suspend KpmBridge calls.
  */
-class MainViewModel : ViewModel() {
+class MainViewModel(application: Application) : AndroidViewModel(application) {
 
-    companion object {
-        private const val TAG = "SVCMon"
+    // ---- App selection ----
+    private val _selectedApp = MutableLiveData<AppResolver.AppInfo?>()
+    val selectedApp: LiveData<AppResolver.AppInfo?> = _selectedApp
+
+    fun selectApp(app: AppResolver.AppInfo?) {
+        _selectedApp.value = app
     }
 
-    // ===== Status =====
-    private val _status = MutableLiveData<StatusParser.ModuleStatus>()
-    val status: LiveData<StatusParser.ModuleStatus> = _status
+    // ---- Preset selection ----
+    private val _selectedPreset = MutableLiveData<Preset?>()
+    val selectedPreset: LiveData<Preset?> = _selectedPreset
 
-    // ===== Events =====
-    private val _events = MutableLiveData<List<StatusParser.SvcEvent>>(emptyList())
-    val events: LiveData<List<StatusParser.SvcEvent>> = _events
-    private val eventBuffer = mutableListOf<StatusParser.SvcEvent>()
-    private val maxEvents = 2000
+    fun selectPreset(preset: Preset?) {
+        _selectedPreset.value = preset
+    }
 
-    // ===== Toast =====
-    private val _toast = MutableLiveData<String?>()
-    val toast: LiveData<String?> = _toast
+    // ---- Module status ----
+    private val _status = MutableLiveData<ModuleStatus>()
+    val status: LiveData<ModuleStatus> = _status
 
-    // ===== UI selections =====
-    var selectedApp: AppInfo? = null
-    var selectedPreset: String = "re_basic"
+    // ---- Events ----
+    private val _events = MutableLiveData<List<SvcEvent>>(emptyList())
+    val events: LiveData<List<SvcEvent>> = _events
 
-    // ===== Event count =====
-    private val _eventCount = MutableLiveData(0)
-    val eventCount: LiveData<Int> = _eventCount
+    private val _allCapturedEvents = mutableListOf<SvcEvent>()
 
-    private val nrSet = mutableSetOf<Int>()
+    // ---- Log messages ----
+    private val _log = MutableLiveData<String>("")
+    val log: LiveData<String> = _log
 
-    // ===== Monitoring state (local) =====
-    private val _monitoring = MutableLiveData(false)
-    val monitoring: LiveData<Boolean> = _monitoring
+    private val logBuffer = StringBuilder()
 
-    // ===== Polling =====
-    private var pollingJob: Job? = null
-    private var pollingPaused = false
+    private fun appendLog(msg: String) {
+        logBuffer.append(msg).append('\n')
+        if (logBuffer.length > 32000) {
+            logBuffer.delete(0, logBuffer.length - 24000)
+        }
+        _log.postValue(logBuffer.toString())
+    }
 
-    fun startPolling() {
-        if (pollingJob?.isActive == true) return
-        pollingJob = viewModelScope.launch {
-            while (isActive) {
-                if (!pollingPaused) {
-                    pollOnce()
-                }
-                delay(3000)
+    fun uiLog(msg: String) {
+        appendLog("[ui] $msg")
+    }
+
+    // ---- Polling ----
+    private val handler = Handler(Looper.getMainLooper())
+    private var polling = false
+    private val pollRunnable = object : Runnable {
+        override fun run() {
+            if (polling) {
+                pollOnce()
+                handler.postDelayed(this, 2000)
             }
         }
     }
 
-    fun stopPolling() {
-        pollingJob?.cancel()
-        pollingJob = null
-    }
+    // ---- Public actions ----
 
-    private suspend fun pollOnce() {
-        try {
-            // Poll status
-            val statusResult = KpmBridge.status()
-            if (statusResult.success && statusResult.output.isNotEmpty()) {
-                val s = StatusParser.parseStatus(statusResult.output)
+    fun refreshStatus() {
+        viewModelScope.launch {
+            try {
+                val json = KpmBridge.status()
+                val s = StatusParser.parseStatus(json)
                 _status.postValue(s)
-                if (s.ok) {
-                    _monitoring.postValue(s.enabled)
-                    synchronized(nrSet) {
-                        nrSet.clear()
-                        nrSet.addAll(s.nrList)
-                    }
-                }
-            }
-
-            // Poll events only when monitoring is active
-            if (_monitoring.value == true) {
-                val evResult = KpmBridge.drain(100)
-                if (evResult.success && evResult.output.isNotEmpty()) {
-                    val drain = StatusParser.parseDrain(evResult.output)
-                    if (drain.ok && drain.events.isNotEmpty()) {
-                        synchronized(eventBuffer) {
-                            eventBuffer.addAll(drain.events)
-                            while (eventBuffer.size > maxEvents) {
-                                eventBuffer.removeAt(0)
-                            }
-                            _events.postValue(ArrayList(eventBuffer))
-                            _eventCount.postValue(eventBuffer.size)
-                        }
-                    }
-                }
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "pollOnce error", e)
-        }
-    }
-
-    // ===== One-click monitoring =====
-
-    /**
-     * One-click start: set UID + apply preset + enable monitoring.
-     * All 3 steps are sent sequentially. If a step fails, we log it
-     * but continue — the critical step is "enable".
-     */
-    fun startMonitoring(uid: Int, presetName: String = "re_basic") {
-        viewModelScope.launch {
-            pollingPaused = true
-            try {
-                // Step 1: Set target UID
-                Log.i(TAG, "startMonitoring: uid=$uid preset=$presetName")
-                val r1 = KpmBridge.setUid(uid)
-                Log.i(TAG, "setUid result: success=${r1.success} output=${r1.output.take(200)} error=${r1.error}")
-                if (!r1.success) {
-                    // Non-fatal: continue anyway, maybe module will use default
-                    Log.w(TAG, "setUid failed but continuing: ${r1.error}")
-                }
-
-                // Step 2: Apply preset
-                val r2 = KpmBridge.preset(presetName)
-                Log.i(TAG, "preset result: success=${r2.success} output=${r2.output.take(200)} error=${r2.error}")
-                if (!r2.success) {
-                    Log.w(TAG, "preset failed but continuing: ${r2.error}")
-                }
-
-                // Step 3: Enable monitoring — this is the critical step
-                val r3 = KpmBridge.enable()
-                Log.i(TAG, "enable result: success=${r3.success} output=${r3.output.take(200)} error=${r3.error}")
-                if (r3.success) {
-                    _monitoring.postValue(true)
-                    _toast.postValue("监控已启动" +
-                        if (uid >= 0) " (UID: $uid)" else " (全部 APP)")
-                } else {
-                    _toast.postValue("启动监控失败: ${r3.error}")
-                }
+                appendLog("[status] enabled=${s.enabled} uid=${s.uid} tier2=${s.tier2} buffered=${s.eventsBuffered} total=${s.eventsTotal}")
             } catch (e: Exception) {
-                Log.e(TAG, "startMonitoring exception", e)
-                _toast.postValue("启动异常: ${e.message}")
-            } finally {
-                pollingPaused = false
-                pollOnce()
+                appendLog("[error] status: ${e.message}")
             }
         }
     }
 
-    /** Start with custom NRs instead of preset */
-    fun startMonitoringWithNrs(uid: Int, nrs: List<Int>) {
+    fun startMonitoring() {
         viewModelScope.launch {
-            pollingPaused = true
             try {
-                Log.i(TAG, "startMonitoringWithNrs: uid=$uid nrs=${nrs.size}")
-                val r1 = KpmBridge.setUid(uid)
-                Log.i(TAG, "setUid result: ${r1.success} ${r1.output.take(100)}")
-
-                val r2 = KpmBridge.setNrs(nrs)
-                Log.i(TAG, "setNrs result: ${r2.success} ${r2.output.take(100)}")
-
-                val r3 = KpmBridge.enable()
-                Log.i(TAG, "enable result: ${r3.success} ${r3.output.take(100)}")
-                if (r3.success) {
-                    _monitoring.postValue(true)
-                    _toast.postValue("监控已启动 (${nrs.size} 个系统调用)")
-                } else {
-                    _toast.postValue("启动失败: ${r3.error}")
+                // Set UID filter if an app is selected
+                _selectedApp.value?.let { app ->
+                    val uidResult = KpmBridge.setUid(app.uid)
+                    appendLog("[uid] set to ${app.uid} (${app.label})")
                 }
+
+                // Apply preset if selected
+                val preset = _selectedPreset.value ?: Preset.ALL_PRESETS.first()
+                _selectedPreset.postValue(preset)
+                KpmBridge.preset(preset.id)
+                appendLog("[preset] applied: ${preset.name}")
+
+                val result = KpmBridge.enable()
+                val sr = StatusParser.parseSimple(result)
+                appendLog("[enable] ${sr.msg.ifEmpty { sr.error.ifEmpty { "ok" } }}")
+                refreshStatus()
+
+                // Start polling
+                polling = true
+                handler.postDelayed(pollRunnable, 2000)
             } catch (e: Exception) {
-                Log.e(TAG, "startMonitoringWithNrs exception", e)
-                _toast.postValue("启动异常: ${e.message}")
-            } finally {
-                pollingPaused = false
-                pollOnce()
+                appendLog("[error] enable: ${e.message}")
             }
         }
     }
 
-    /** Stop monitoring */
     fun stopMonitoring() {
+        polling = false
+        handler.removeCallbacks(pollRunnable)
         viewModelScope.launch {
-            pollingPaused = true
             try {
-                val r = KpmBridge.disable()
-                if (r.success) {
-                    _monitoring.postValue(false)
-                    _toast.postValue("监控已停止")
-                } else {
-                    _toast.postValue("停止失败: ${r.error}")
+                val result = KpmBridge.disable()
+                val sr = StatusParser.parseSimple(result)
+                appendLog("[disable] ${sr.msg.ifEmpty { sr.error.ifEmpty { "ok" } }}")
+                refreshStatus()
+            } catch (e: Exception) {
+                appendLog("[error] disable: ${e.message}")
+            }
+        }
+    }
+
+    fun pollOnce() {
+        viewModelScope.launch {
+            try {
+                val json = KpmBridge.drain()
+                val dr = StatusParser.parseDrain(json)
+                if (dr.events.isNotEmpty()) {
+                    _allCapturedEvents.addAll(dr.events)
+                    _events.postValue(_allCapturedEvents.toList())
+                    appendLog("[drain] got ${dr.events.size} events (total captured: ${_allCapturedEvents.size})")
                 }
             } catch (e: Exception) {
-                _toast.postValue("停止异常: ${e.message}")
-            } finally {
-                pollingPaused = false
-                pollOnce()
-            }
-        }
-    }
-
-    fun toastConsumed() {
-        _toast.postValue(null)
-    }
-
-    // ===== Individual filter controls =====
-
-    fun setTargetUid(uid: Int) {
-        viewModelScope.launch {
-            pollingPaused = true
-            try {
-                val r = KpmBridge.setUid(uid)
-                if (r.success) {
-                    _toast.postValue(if (uid < 0) "已切换到监控所有 APP" else "目标 UID: $uid")
-                } else {
-                    _toast.postValue("设置失败: ${r.error}")
-                }
-            } finally {
-                pollingPaused = false
-                pollOnce()
-            }
-        }
-    }
-
-    fun applyPreset(presetName: String) {
-        viewModelScope.launch {
-            pollingPaused = true
-            try {
-                val r = KpmBridge.preset(presetName)
-                if (r.success) {
-                    _toast.postValue("预设已应用: $presetName")
-                } else {
-                    _toast.postValue("应用失败: ${r.error}")
-                }
-            } finally {
-                pollingPaused = false
-                pollOnce()
-            }
-        }
-    }
-
-    fun setNrs(nrs: List<Int>) {
-        viewModelScope.launch {
-            pollingPaused = true
-            try {
-                val r = KpmBridge.setNrs(nrs)
-                if (r.success) {
-                    _toast.postValue("已设置 ${nrs.size} 个系统调用")
-                } else {
-                    _toast.postValue("设置失败: ${r.error}")
-                }
-            } finally {
-                pollingPaused = false
-                pollOnce()
+                appendLog("[error] drain: ${e.message}")
             }
         }
     }
 
     fun addNr(nr: Int) {
         viewModelScope.launch {
-            pollingPaused = true
-            try {
-                val newList = synchronized(nrSet) {
-                    nrSet.add(nr)
-                    nrSet.toList().sorted()
-                }
-                val r = KpmBridge.setNrs(newList)
-                if (r.success) {
-                    _toast.postValue("已添加 NR $nr")
-                } else {
-                    _toast.postValue("添加失败: ${r.error}")
-                }
-            } finally {
-                pollingPaused = false
-                pollOnce()
-            }
+            KpmBridge.enableNr(nr)
+            appendLog("[nr] enabled $nr (${StatusParser.nrToName(nr)})")
         }
     }
 
     fun removeNr(nr: Int) {
         viewModelScope.launch {
-            pollingPaused = true
-            try {
-                val newList = synchronized(nrSet) {
-                    nrSet.remove(nr)
-                    nrSet.toList().sorted()
-                }
-                val r = KpmBridge.setNrs(newList)
-                if (r.success) {
-                    _toast.postValue("已移除 NR $nr")
-                } else {
-                    _toast.postValue("移除失败: ${r.error}")
-                }
-            } finally {
-                pollingPaused = false
-                pollOnce()
-            }
+            KpmBridge.disableNr(nr)
+            appendLog("[nr] disabled $nr (${StatusParser.nrToName(nr)})")
         }
     }
 
-    fun enableAll() {
+    fun setTier2(enabled: Boolean) {
         viewModelScope.launch {
-            pollingPaused = true
-            try { KpmBridge.enableAll() } finally { pollingPaused = false; pollOnce() }
+            KpmBridge.tier2(enabled)
+            appendLog("[tier2] ${if (enabled) "enabled" else "disabled"}")
+            refreshStatus()
         }
-    }
-
-    fun disableAll() {
-        viewModelScope.launch {
-            pollingPaused = true
-            try { KpmBridge.disableAll() } finally { pollingPaused = false; pollOnce() }
-        }
-    }
-
-    fun tier2(on: Boolean) {
-        viewModelScope.launch {
-            pollingPaused = true
-            try {
-                val r = KpmBridge.tier2(on)
-                if (r.success) _toast.postValue(if (on) "Tier2 已加载" else "Tier2 已卸载")
-            } finally {
-                pollingPaused = false
-                pollOnce()
-            }
-        }
-    }
-
-    fun setTier2(on: Boolean) {
-        tier2(on)
     }
 
     fun clearEvents() {
         viewModelScope.launch {
-            pollingPaused = true
-            try {
-                KpmBridge.clear()
-                synchronized(eventBuffer) {
-                    eventBuffer.clear()
-                    _events.postValue(emptyList())
-                    _eventCount.postValue(0)
-                }
-                _toast.postValue("事件已清空")
-            } finally {
-                pollingPaused = false
-                pollOnce()
+            KpmBridge.clear()
+            _allCapturedEvents.clear()
+            _events.postValue(emptyList())
+            appendLog("[clear] events cleared")
+        }
+    }
+
+    fun exportCsv() {
+        viewModelScope.launch {
+            val ctx = getApplication<Application>()
+            val evts = _allCapturedEvents.toList()
+            if (evts.isEmpty()) {
+                appendLog("[export] no events to export")
+                return@launch
+            }
+            val file = LogExporter.exportCsv(ctx, evts)
+            if (file != null) {
+                appendLog("[export] CSV: ${file.absolutePath} (${evts.size} events)")
+                val intent = LogExporter.createShareIntent(ctx, file, "text/csv")
+                intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                ctx.startActivity(intent)
+            } else {
+                appendLog("[export] CSV export failed")
             }
         }
     }
 
-    fun refreshNow() {
-        viewModelScope.launch { pollOnce() }
+    fun exportJson() {
+        viewModelScope.launch {
+            val ctx = getApplication<Application>()
+            val evts = _allCapturedEvents.toList()
+            if (evts.isEmpty()) {
+                appendLog("[export] no events to export")
+                return@launch
+            }
+            val file = LogExporter.exportJson(ctx, evts)
+            if (file != null) {
+                appendLog("[export] JSON: ${file.absolutePath} (${evts.size} events)")
+                val intent = LogExporter.createShareIntent(ctx, file, "application/json")
+                intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                ctx.startActivity(intent)
+            } else {
+                appendLog("[export] JSON export failed")
+            }
+        }
+    }
+
+    fun setSuperKey(key: String) {
+        KpmBridge.setSuperKey(key)
+        appendLog("[config] superkey updated")
     }
 
     override fun onCleared() {
         super.onCleared()
-        stopPolling()
+        polling = false
+        handler.removeCallbacks(pollRunnable)
     }
 }

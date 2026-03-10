@@ -4,6 +4,8 @@ import android.util.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.io.BufferedReader
 import java.io.InputStreamReader
 
@@ -28,6 +30,7 @@ object KpmBridge {
     private const val MODULE = "svc_monitor"
     private const val OUT_FILE = "/data/local/tmp/svc_out.json"
     private var superKey = "XiaoLu0129"
+    private val mutex = Mutex()
 
     data class KpmResult(
         val success: Boolean,
@@ -74,42 +77,38 @@ object KpmBridge {
      *   /path/kpatch SUPERKEY kpm ctl0 svc_monitor 'uid 10234'
      * We use single quotes to be safe.
      */
-    private suspend fun execute(command: String): KpmResult = withContext(Dispatchers.IO) {
-        try {
-            // Phase 0: remove old output
-            shellExec("rm -f $OUT_FILE")
+    private suspend fun execute(command: String): KpmResult = mutex.withLock {
+        withContext(Dispatchers.IO) {
+            try {
+                shellExec("rm -f $OUT_FILE")
 
-            // Phase 1: send command via kpatch ctl0
-            // Use single quotes around the command to preserve it as one argument
-            val shellCmd = "$KPATCH $superKey kpm ctl0 $MODULE '$command'"
-            val (exitCode, directOutput) = shellExec(shellCmd)
+                val shellCmd = "$KPATCH $superKey kpm ctl0 $MODULE '$command'"
+                val (exitCode, directOutput) = shellExec(shellCmd)
 
-            // Brief delay for kernel file write to complete
-            delay(150)
+                delay(150)
 
-            // Phase 2: read output file
-            val (_, fileOutput) = shellExec("cat $OUT_FILE 2>/dev/null")
+                val (_, fileOutput) = shellExec("cat $OUT_FILE 2>/dev/null")
 
-            // Prefer file output (larger, complete JSON), fall back to direct output
-            val output = when {
-                fileOutput.isNotEmpty() && fileOutput.startsWith("{") -> fileOutput
-                directOutput.isNotEmpty() && directOutput.startsWith("{") -> directOutput
-                fileOutput.isNotEmpty() -> fileOutput
-                directOutput.isNotEmpty() -> directOutput
-                else -> ""
+                val output = when {
+                    fileOutput.isNotEmpty() && fileOutput.startsWith("{") -> fileOutput
+                    directOutput.isNotEmpty() && directOutput.startsWith("{") -> directOutput
+                    fileOutput.isNotEmpty() -> fileOutput
+                    directOutput.isNotEmpty() -> directOutput
+                    else -> ""
+                }
+
+                if (output.isNotEmpty()) {
+                    Log.d(TAG, "execute($command) OK: ${output.take(200)}")
+                    KpmResult(true, output)
+                } else {
+                    val errMsg = "exit=$exitCode, no output"
+                    Log.w(TAG, "execute($command) FAIL: $errMsg")
+                    KpmResult(false, "", errMsg)
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "execute($command) exception", e)
+                KpmResult(false, "", e.message ?: "Unknown error")
             }
-
-            if (output.isNotEmpty()) {
-                Log.d(TAG, "execute($command) OK: ${output.take(200)}")
-                KpmResult(true, output)
-            } else {
-                val errMsg = "exit=$exitCode, no output"
-                Log.w(TAG, "execute($command) FAIL: $errMsg")
-                KpmResult(false, "", errMsg)
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "execute($command) exception", e)
-            KpmResult(false, "", e.message ?: "Unknown error")
         }
     }
 
@@ -160,4 +159,18 @@ object KpmBridge {
     suspend fun drain(max: Int = 100) = execute("drain $max")
     suspend fun events() = execute("events")
     suspend fun clear() = execute("clear")
+
+    suspend fun readProcMaps(pid: Int): String = mutex.withLock {
+        withContext(Dispatchers.IO) {
+            val (_, out) = shellExec("cat /proc/$pid/maps 2>/dev/null")
+            out
+        }
+    }
+
+    suspend fun readProcFdLink(pid: Int, fd: Long): String = mutex.withLock {
+        withContext(Dispatchers.IO) {
+            val (_, out) = shellExec("readlink /proc/$pid/fd/$fd 2>/dev/null")
+            out
+        }
+    }
 }

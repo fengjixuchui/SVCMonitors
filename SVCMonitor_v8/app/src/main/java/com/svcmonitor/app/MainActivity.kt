@@ -1,5 +1,6 @@
 package com.svcmonitor.app
 
+import android.content.Intent
 import android.graphics.Color
 import android.graphics.Typeface
 import android.os.Bundle
@@ -11,7 +12,11 @@ import android.view.ViewGroup
 import android.widget.*
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.FileProvider
 import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.launch
+import java.io.File
 
 /**
  * MainActivity — 4-tab UI built programmatically (no XML layouts).
@@ -24,6 +29,7 @@ import androidx.lifecycle.ViewModelProvider
 class MainActivity : AppCompatActivity() {
 
     private lateinit var vm: MainViewModel
+    private lateinit var logExporter: LogExporter
 
     /* ── views that observers touch (must be initialized before observeViewModel) ── */
     // Dashboard tab
@@ -32,6 +38,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var tvUid: TextView
     private lateinit var tvEventCount: TextView
     private lateinit var tvMonState: TextView
+    private lateinit var tvMsg: TextView
     private lateinit var btnStartStop: Button
     private lateinit var spinnerApp: Spinner
     private lateinit var spinnerPreset: Spinner
@@ -48,9 +55,10 @@ class MainActivity : AppCompatActivity() {
     // Filter tab
     private lateinit var tvNrCount: TextView
     private lateinit var tvNrList: TextView
+    private val nrNameViews = HashMap<Int, TextView>()
 
     /* ── app list data ────────────────────────────────────────── */
-    private var appList: List<AppResolver.AppInfo> = emptyList()
+    private var appList: List<AppInfo> = emptyList()
 
     /* ── colors ───────────────────────────────────────────────── */
     private val cPrimary = Color.parseColor("#1565C0")
@@ -65,6 +73,7 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         vm = ViewModelProvider(this)[MainViewModel::class.java]
+        logExporter = LogExporter(this)
 
         // Load app list
         appList = AppResolver.getInstalledApps(this)
@@ -181,6 +190,12 @@ class MainActivity : AppCompatActivity() {
             tvMonState = makeValue("状态: 未启动").apply {
                 setTextColor(cSecondary)
             }; addView(tvMonState)
+
+            tvMsg = makeValue("提示: -").apply {
+                setTextColor(cSecondary)
+                maxLines = 2
+                ellipsize = TextUtils.TruncateAt.END
+            }; addView(tvMsg)
         })
 
         // Step 1: Select app
@@ -272,8 +287,8 @@ class MainActivity : AppCompatActivity() {
                     isAllCaps = false
                     setOnClickListener {
                         vm.selectedPreset = preset.id
-                        vm.viewModelScope_launch { KpmBridge.preset(preset.id) }
-                        Toast.makeText(this@MainActivity, "已应用: ${preset.name}", Toast.LENGTH_SHORT).show()
+                        vm.applyPreset(preset.id)
+                        tvMsg.text = "提示: 已应用预设 ${preset.name}"
                     }
                     layoutParams = LinearLayout.LayoutParams(
                         ViewGroup.LayoutParams.MATCH_PARENT,
@@ -299,7 +314,10 @@ class MainActivity : AppCompatActivity() {
                 text = "添加"
                 setOnClickListener {
                     val nr = etNr.text.toString().toIntOrNull()
-                    if (nr != null) { vm.addNr(nr); etNr.text.clear() }
+                    if (nr != null) {
+                        vm.addNr(nr)
+                        etNr.text.clear()
+                    }
                 }
                 layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
             })
@@ -307,11 +325,59 @@ class MainActivity : AppCompatActivity() {
                 text = "移除"
                 setOnClickListener {
                     val nr = etNr.text.toString().toIntOrNull()
-                    if (nr != null) { vm.removeNr(nr); etNr.text.clear() }
+                    if (nr != null) {
+                        vm.removeNr(nr)
+                        etNr.text.clear()
+                    }
                 }
                 layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
             })
             addView(row)
+        })
+
+        col.addView(makeCard {
+            addView(makeLabel("按分类选择系统调用"))
+            StatusParser.categories.forEach { cat ->
+                addView(TextView(this@MainActivity).apply {
+                    text = "${cat.icon} ${cat.name}"
+                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+                    setTextColor(cPrimary)
+                    typeface = Typeface.DEFAULT_BOLD
+                    setPadding(0, dp(8), 0, dp(4))
+                })
+
+                cat.syscalls.forEach { sc ->
+                    val row2 = LinearLayout(this@MainActivity).apply {
+                        orientation = LinearLayout.HORIZONTAL
+                        gravity = Gravity.CENTER_VERTICAL
+                        setPadding(0, dp(2), 0, dp(2))
+                    }
+                    row2.addView(TextView(this@MainActivity).apply {
+                        text = sc.nr.toString()
+                        typeface = Typeface.MONOSPACE
+                        setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+                        setTextColor(cSecondary)
+                        minWidth = dp(48)
+                    })
+                    val nameView = TextView(this@MainActivity).apply {
+                        text = "${sc.name}  ${sc.description}"
+                        setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+                        setTextColor(cText)
+                        layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+                    }
+                    nrNameViews[sc.nr] = nameView
+                    row2.addView(nameView)
+                    row2.addView(Button(this@MainActivity).apply {
+                        text = "+"
+                        setOnClickListener { vm.addNr(sc.nr) }
+                    })
+                    row2.addView(Button(this@MainActivity).apply {
+                        text = "-"
+                        setOnClickListener { vm.removeNr(sc.nr) }
+                    })
+                    addView(row2)
+                }
+            }
         })
 
         sv.addView(col)
@@ -353,7 +419,7 @@ class MainActivity : AppCompatActivity() {
             text = "CSV"
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
             isAllCaps = false
-            setOnClickListener { vm.exportCsv() }
+            setOnClickListener { exportCsv() }
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT
@@ -364,7 +430,7 @@ class MainActivity : AppCompatActivity() {
             text = "JSON"
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
             isAllCaps = false
-            setOnClickListener { vm.exportJson() }
+            setOnClickListener { exportJson() }
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT
@@ -423,7 +489,7 @@ class MainActivity : AppCompatActivity() {
         col.addView(makeCard {
             addView(makeLabel("SuperKey"))
             tvSuperKey = EditText(this@MainActivity).apply {
-                setText(KpmBridge.superKey)
+                setText(KpmBridge.getSuperKey())
                 hint = "输入 SuperKey"
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
                 inputType = android.text.InputType.TYPE_CLASS_TEXT or
@@ -435,8 +501,8 @@ class MainActivity : AppCompatActivity() {
                 setOnClickListener {
                     val key = tvSuperKey.text.toString().trim()
                     if (key.isNotEmpty()) {
-                        KpmBridge.superKey = key
-                        Toast.makeText(this@MainActivity, "SuperKey 已更新", Toast.LENGTH_SHORT).show()
+                        KpmBridge.setSuperKey(key)
+                        tvMsg.text = "提示: SuperKey 已更新"
                     }
                 }
             })
@@ -455,7 +521,7 @@ class MainActivity : AppCompatActivity() {
             switchTier2 = Switch(this@MainActivity).apply {
                 text = "启用 Tier-2"
                 setOnCheckedChangeListener { _, checked ->
-                    vm.setTier2(checked)
+                    vm.tier2(checked)
                 }
                 layoutParams = LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
@@ -493,6 +559,7 @@ class MainActivity : AppCompatActivity() {
                 tvNrCount.text = "已选: ${s.nrCount} 个系统调用"
                 tvNrList.text = "NR列表: ${s.nrList.joinToString(", ") { "${StatusParser.nrToName(it)}($it)" }}"
                 switchTier2.isChecked = s.tier2
+                refreshNrHighlights(s.nrList)
             }
         }
 
@@ -525,7 +592,7 @@ class MainActivity : AppCompatActivity() {
         // Toast
         vm.toast.observe(this) { msg ->
             if (msg != null) {
-                Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
+                tvMsg.text = "提示: $msg"
                 vm.toastConsumed()
             }
         }
@@ -569,23 +636,23 @@ class MainActivity : AppCompatActivity() {
                 gravity = Gravity.CENTER_VERTICAL
             }
             row1.addView(TextView(this).apply {
-                text = "${evt.syscallName}(${evt.nr})"
+                text = "#${evt.seq}  ${evt.name}(${evt.nr})"
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
                 setTextColor(cPrimary)
                 typeface = Typeface.DEFAULT_BOLD
                 layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
             })
             row1.addView(TextView(this).apply {
-                text = evt.category
+                text = StatusParser.syscallCategory(evt.nr)
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
                 setTextColor(cAccent)
                 setPadding(dp(6), dp(2), dp(6), dp(2))
             })
             card.addView(row1)
 
-            // Row 2: pid/tid/comm
+            // Row 2: pid/uid/comm
             card.addView(TextView(this).apply {
-                text = "pid=${evt.pid} tid=${evt.tid} comm=${evt.comm}"
+                text = "pid=${evt.pid} uid=${evt.uid} comm=${evt.comm}"
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
                 setTextColor(cSecondary)
             })
@@ -613,37 +680,94 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showEventDetail(evt: StatusParser.SvcEvent) {
-        val detail = buildString {
-            appendLine("═══ 系统调用详情 ═══")
-            appendLine()
-            appendLine("调用号: ${evt.nr} (${evt.syscallName})")
-            appendLine("分类: ${evt.category}")
-            appendLine("PID: ${evt.pid}")
-            appendLine("TID: ${evt.tid}")
-            appendLine("UID: ${evt.uid}")
-            appendLine("进程名: ${evt.comm}")
-            appendLine("时间戳: ${evt.ts}")
-            appendLine("返回值: ${evt.ret}")
-            appendLine()
-            appendLine("═══ 原始参数 ═══")
-            for (i in 0..5) {
-                appendLine("  x${i}: 0x${java.lang.Long.toHexString(evt.args[i])} (${evt.args[i]})")
-            }
-            appendLine()
-            appendLine("═══ 解析结果 ═══")
-            appendLine(evt.desc)
-        }
+        vm.viewModelScope_launch {
+            val pcResolved = resolveAddress(evt.pid, evt.pc)
+            val callerResolved = resolveAddress(evt.pid, evt.caller)
 
-        AlertDialog.Builder(this)
-            .setTitle("${evt.syscallName}(${evt.nr})")
-            .setMessage(detail)
-            .setPositiveButton("确定", null)
-            .setNeutralButton("复制") { _, _ ->
-                val clip = getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager
-                clip.setPrimaryClip(android.content.ClipData.newPlainText("svc_event", detail))
-                Toast.makeText(this, "已复制到剪贴板", Toast.LENGTH_SHORT).show()
+            val fdResolved = if (nrUsesFd(evt.nr)) {
+                val r = KpmBridge.readProcFdLink(evt.pid, evt.a0)
+                if (r.isNotBlank()) r else ""
+            } else {
+                ""
             }
-            .show()
+
+            val detail = buildString {
+                appendLine("═══ 系统调用详情 ═══")
+                appendLine()
+                appendLine("#${evt.seq}  ${evt.name}(${evt.nr})")
+                appendLine("分类: ${StatusParser.syscallCategory(evt.nr)}")
+                appendLine("PID: ${evt.pid}  UID: ${evt.uid}")
+                appendLine("进程名: ${evt.comm}")
+                appendLine()
+                appendLine("pc: 0x${java.lang.Long.toHexString(evt.pc)}${if (pcResolved.isNotEmpty()) "  →  $pcResolved" else ""}")
+                appendLine("caller: 0x${java.lang.Long.toHexString(evt.caller)}${if (callerResolved.isNotEmpty()) "  →  $callerResolved" else ""}")
+                if (fdResolved.isNotEmpty()) {
+                    appendLine("fd(${evt.a0}): $fdResolved")
+                }
+                appendLine()
+                appendLine("═══ 参数 ═══")
+                appendLine("a0: 0x${java.lang.Long.toHexString(evt.a0)} (${evt.a0})")
+                appendLine("a1: 0x${java.lang.Long.toHexString(evt.a1)} (${evt.a1})")
+                appendLine("a2: 0x${java.lang.Long.toHexString(evt.a2)} (${evt.a2})")
+                appendLine("a3: 0x${java.lang.Long.toHexString(evt.a3)} (${evt.a3})")
+                appendLine("a4: 0x${java.lang.Long.toHexString(evt.a4)} (${evt.a4})")
+                appendLine("a5: 0x${java.lang.Long.toHexString(evt.a5)} (${evt.a5})")
+                appendLine()
+                appendLine("═══ 解析结果 ═══")
+                appendLine(evt.desc)
+            }
+
+            AlertDialog.Builder(this@MainActivity)
+                .setTitle("${evt.name}(${evt.nr})")
+                .setMessage(detail)
+                .setPositiveButton("确定", null)
+                .setNeutralButton("复制") { _, _ ->
+                    val clip = getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                    clip.setPrimaryClip(android.content.ClipData.newPlainText("svc_event", detail))
+                    tvMsg.text = "提示: 已复制到剪贴板"
+                }
+                .show()
+        }
+    }
+
+    private fun exportCsv() {
+        val events = vm.events.value ?: emptyList()
+        if (events.isEmpty()) {
+            tvMsg.text = "提示: 没有事件可导出"
+            return
+        }
+        try {
+            val file = logExporter.exportCsv(events)
+            shareFile(file, "text/csv")
+            tvMsg.text = "提示: 已导出 CSV"
+        } catch (e: Exception) {
+            tvMsg.text = "提示: 导出失败: ${e.message}"
+        }
+    }
+
+    private fun exportJson() {
+        val events = vm.events.value ?: emptyList()
+        if (events.isEmpty()) {
+            tvMsg.text = "提示: 没有事件可导出"
+            return
+        }
+        try {
+            val file = logExporter.exportJson(events)
+            shareFile(file, "application/json")
+            tvMsg.text = "提示: 已导出 JSON"
+        } catch (e: Exception) {
+            tvMsg.text = "提示: 导出失败: ${e.message}"
+        }
+    }
+
+    private fun shareFile(file: File, mimeType: String) {
+        val uri = FileProvider.getUriForFile(this, "${packageName}.fileprovider", file)
+        val intent = Intent(Intent.ACTION_SEND).apply {
+            type = mimeType
+            putExtra(Intent.EXTRA_STREAM, uri)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        startActivity(Intent.createChooser(intent, "分享"))
     }
 
     /* ══════════════════════════════════════════════════════════════
@@ -656,7 +780,7 @@ class MainActivity : AppCompatActivity() {
         } else {
             val app = vm.selectedApp
             if (app == null) {
-                Toast.makeText(this, "请先选择目标应用", Toast.LENGTH_SHORT).show()
+                tvMsg.text = "提示: 请先选择目标应用"
                 return
             }
             vm.startMonitoring(app.uid, vm.selectedPreset)
@@ -703,6 +827,58 @@ class MainActivity : AppCompatActivity() {
             setTextColor(cText)
             setPadding(0, dp(2), 0, dp(2))
         }
+    }
+
+    private fun refreshNrHighlights(nrs: List<Int>) {
+        val set = nrs.toHashSet()
+        for ((nr, tv) in nrNameViews) {
+            if (set.contains(nr)) {
+                tv.setTextColor(cGreen)
+                tv.typeface = Typeface.DEFAULT_BOLD
+            } else {
+                tv.setTextColor(cText)
+                tv.typeface = Typeface.DEFAULT
+            }
+        }
+    }
+
+    private fun nrUsesFd(nr: Int): Boolean {
+        return when (nr) {
+            57, 62, 63, 64, 65, 66, 71, 80, 29, 46, 45, 43, 25 -> true
+            else -> false
+        }
+    }
+
+    private data class MapEntry(val start: Long, val end: Long, val fileOffset: Long, val path: String)
+
+    private suspend fun resolveAddress(pid: Int, addr: Long): String {
+        if (pid <= 0 || addr == 0L) return ""
+        val maps = KpmBridge.readProcMaps(pid)
+        if (maps.isBlank()) return ""
+        val entry = findMapEntry(maps, addr) ?: return "unmapped@0x${java.lang.Long.toHexString(addr)}"
+        val name = if (entry.path.isNotBlank()) entry.path.substringAfterLast('/') else "[anon]"
+        return "$name+0x${java.lang.Long.toHexString(entry.fileOffset)}"
+    }
+
+    private fun findMapEntry(maps: String, addr: Long): MapEntry? {
+        val lines = maps.split('\n')
+        for (line in lines) {
+            if (line.isBlank()) continue
+            val parts = line.trim().split(Regex("\\s+"), limit = 6)
+            if (parts.size < 3) continue
+            val range = parts[0]
+            val offStr = parts[2]
+            val path = if (parts.size >= 6) parts[5] else ""
+            val dash = range.indexOf('-')
+            if (dash <= 0) continue
+            val start = range.substring(0, dash).toLongOrNull(16) ?: continue
+            val end = range.substring(dash + 1).toLongOrNull(16) ?: continue
+            if (addr < start || addr >= end) continue
+            val offset = offStr.toLongOrNull(16) ?: 0L
+            val fileOffset = (addr - start) + offset
+            return MapEntry(start, end, fileOffset, path)
+        }
+        return null
     }
 
     /* helper for filter tab buttons to launch coroutine */

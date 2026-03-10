@@ -1,772 +1,781 @@
 package com.svcmonitor.app
 
-import android.content.Intent
+import android.app.AlertDialog
 import android.graphics.Color
 import android.graphics.Typeface
 import android.os.Bundle
 import android.text.TextUtils
-import android.util.Log
-import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.widget.*
-import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
-import androidx.core.content.FileProvider
 import androidx.lifecycle.ViewModelProvider
-import java.io.File
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.launch
 
 /**
- * MainActivity — 4-tab UI built programmatically (no XML layouts).
- *
- * Tabs: 监控 | 过滤 | 事件 | 设置
- *
- * CRITICAL: All tab views are pre-built in onCreate() BEFORE observeViewModel()
- *           to avoid UninitializedPropertyAccessException on lateinit properties.
+ * MainActivity -- 4-tab programmatic UI for SVCMonitor v8.3.
+ * Tabs: Control | Events | Filter | Settings
+ * No XML layouts -- all views created in code.
  */
 class MainActivity : AppCompatActivity() {
 
     private lateinit var vm: MainViewModel
-    private lateinit var logExporter: LogExporter
-    private val toastLogTag = "SVCMon"
+    private lateinit var tabHost: LinearLayout
+    private lateinit var contentFrame: FrameLayout
 
-    /* ── views that observers touch (must be initialized before observeViewModel) ── */
-    // Dashboard tab
-    private lateinit var tvStatus: TextView
-    private lateinit var tvVersion: TextView
-    private lateinit var tvUid: TextView
-    private lateinit var tvEventCount: TextView
-    private lateinit var tvMonState: TextView
-    private lateinit var btnStartStop: Button
-    private lateinit var spinnerApp: Spinner
-    private lateinit var spinnerPreset: Spinner
+    // Tab views
+    private lateinit var controlView: View
+    private lateinit var eventsView: View
+    private lateinit var filterView: View
+    private lateinit var settingsView: View
 
-    // Events tab
-    private lateinit var tvEvtCount: TextView
-    private lateinit var llEventList: LinearLayout
-    private lateinit var scrollEvents: ScrollView
+    // Control tab widgets
+    private lateinit var statusText: TextView
+    private lateinit var logText: TextView
 
-    // Settings tab
-    private lateinit var switchTier2: Switch
-    private lateinit var tvSuperKey: EditText
+    // Events tab widgets
+    private lateinit var eventsListLayout: LinearLayout
+    private lateinit var eventsCountText: TextView
 
-    // Filter tab
-    private lateinit var tvNrCount: TextView
-    private lateinit var tvNrList: TextView
+    private data class MapEntry(
+        val start: Long,
+        val end: Long,
+        val fileOffset: Long,
+        val path: String
+    )
 
-    /* ── app list data ────────────────────────────────────────── */
-    private var appList: List<AppInfo> = emptyList()
-
-    /* ── colors ───────────────────────────────────────────────── */
-    private val cPrimary = Color.parseColor("#1565C0")
-    private val cBg = Color.parseColor("#F5F5F5")
-    private val cCard = Color.WHITE
-    private val cText = Color.parseColor("#212121")
-    private val cSecondary = Color.parseColor("#757575")
-    private val cGreen = Color.parseColor("#2E7D32")
-    private val cRed = Color.parseColor("#C62828")
-    private val cAccent = Color.parseColor("#FF6F00")
+    private val syscallNameViews = HashMap<Int, TextView>()
+    private var enabledNrSet: Set<Int> = emptySet()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
         vm = ViewModelProvider(this)[MainViewModel::class.java]
-        logExporter = LogExporter(this)
 
-        // Load app list
-        appList = AppResolver.getInstalledApps(this)
-
-        // Pre-build ALL tab views FIRST (before observeViewModel!)
-        val dashboardView = buildDashboardTab()
-        val filterView = buildFilterTab()
-        val eventsView = buildEventsTab()
-        val settingsView = buildSettingsTab()
-
-        // Build main layout with TabHost
-        val root = buildMainLayout(dashboardView, filterView, eventsView, settingsView)
-        setContentView(root)
-
-        // NOW observe — all lateinit properties are initialized
-        observeViewModel()
-
-        // Start polling
-        vm.startPolling()
-    }
-
-    /* ══════════════════════════════════════════════════════════════
-     *  MAIN LAYOUT with TabHost
-     * ══════════════════════════════════════════════════════════════ */
-
-    private fun buildMainLayout(
-        dashboard: View, filter: View, events: View, settings: View
-    ): View {
-        val tabHost = TabHost(this, null).apply {
-            id = android.R.id.tabhost
-            layoutParams = ViewGroup.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT
-            )
-        }
-
-        val ll = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            layoutParams = ViewGroup.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT
-            )
-        }
-
-        // Title bar
-        val titleBar = TextView(this).apply {
-            text = "SVCMonitor v8.1"
-            setTextColor(Color.WHITE)
-            setBackgroundColor(cPrimary)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 18f)
-            typeface = Typeface.DEFAULT_BOLD
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(16), dp(12), dp(16), dp(12))
-        }
-        ll.addView(titleBar)
-
-        // Tab widget
-        val tabWidget = TabWidget(this).apply {
-            id = android.R.id.tabs
-            layoutParams = LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-            )
-        }
-        ll.addView(tabWidget)
-
-        // Tab content
-        val tabContent = FrameLayout(this).apply {
-            id = android.R.id.tabcontent
-            layoutParams = LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                0, 1f
-            )
-        }
-        ll.addView(tabContent)
-
-        tabHost.addView(ll)
-        tabHost.setup()
-
-        // Add tabs with pre-built views
-        tabHost.addTab(tabHost.newTabSpec("dashboard").setIndicator("监控").setContent { dashboard })
-        tabHost.addTab(tabHost.newTabSpec("filter").setIndicator("过滤").setContent { filter })
-        tabHost.addTab(tabHost.newTabSpec("events").setIndicator("事件").setContent { events })
-        tabHost.addTab(tabHost.newTabSpec("settings").setIndicator("设置").setContent { settings })
-
-        return tabHost
-    }
-
-    /* ══════════════════════════════════════════════════════════════
-     *  TAB 1: 监控 (Dashboard)
-     * ══════════════════════════════════════════════════════════════ */
-
-    private fun buildDashboardTab(): View {
-        val sv = ScrollView(this).apply {
-            setBackgroundColor(cBg)
-            layoutParams = ViewGroup.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT
-            )
-        }
-
-        val col = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(16), dp(12), dp(16), dp(16))
-        }
-
-        // Status card
-        col.addView(makeCard {
-            addView(makeLabel("模块状态"))
-            tvStatus = makeValue("未知"); addView(tvStatus)
-            tvVersion = makeValue("版本: —"); addView(tvVersion)
-            tvUid = makeValue("目标 UID: —"); addView(tvUid)
-            tvEventCount = makeValue("事件数: 0"); addView(tvEventCount)
-            tvMonState = makeValue("状态: 未启动").apply {
-                setTextColor(cSecondary)
-            }; addView(tvMonState)
-        })
-
-        // Step 1: Select app
-        col.addView(makeCard {
-            addView(makeLabel("步骤 1: 选择目标应用"))
-            spinnerApp = Spinner(this@MainActivity).apply {
-                val names = listOf("— 请选择 —") + appList.map { "${it.label} (${it.packageName})" }
-                adapter = ArrayAdapter(this@MainActivity, android.R.layout.simple_spinner_dropdown_item, names)
-                onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
-                    override fun onItemSelected(parent: AdapterView<*>?, v: View?, pos: Int, id: Long) {
-                        vm.selectedApp = if (pos > 0) appList[pos - 1] else null
-                    }
-                    override fun onNothingSelected(parent: AdapterView<*>?) {}
-                }
-            }
-            addView(spinnerApp)
-        })
-
-        // Step 2: Select preset
-        col.addView(makeCard {
-            addView(makeLabel("步骤 2: 选择监控预设"))
-            spinnerPreset = Spinner(this@MainActivity).apply {
-                val presetNames = StatusParser.presets.map { "${it.name} — ${it.description}" }
-                adapter = ArrayAdapter(this@MainActivity, android.R.layout.simple_spinner_dropdown_item, presetNames)
-                onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
-                    override fun onItemSelected(parent: AdapterView<*>?, v: View?, pos: Int, id: Long) {
-                        vm.selectedPreset = StatusParser.presets[pos].id
-                    }
-                    override fun onNothingSelected(parent: AdapterView<*>?) {}
-                }
-            }
-            addView(spinnerPreset)
-        })
-
-        // Step 3: Start/Stop button
-        col.addView(makeCard {
-            addView(makeLabel("步骤 3: 启动监控"))
-            btnStartStop = Button(this@MainActivity).apply {
-                text = "一键启用监控"
-                setBackgroundColor(cGreen)
-                setTextColor(Color.WHITE)
-                setOnClickListener { onStartStopClick() }
-                layoutParams = LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT,
-                    ViewGroup.LayoutParams.WRAP_CONTENT
-                ).apply { topMargin = dp(8) }
-            }
-            addView(btnStartStop)
-        })
-
-        sv.addView(col)
-        return sv
-    }
-
-    /* ══════════════════════════════════════════════════════════════
-     *  TAB 2: 过滤 (Filter)
-     * ══════════════════════════════════════════════════════════════ */
-
-    private fun buildFilterTab(): View {
-        val sv = ScrollView(this).apply {
-            setBackgroundColor(cBg)
-            layoutParams = ViewGroup.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT
-            )
-        }
-
-        val col = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(16), dp(12), dp(16), dp(16))
-        }
-
-        col.addView(makeCard {
-            addView(makeLabel("当前 NR 过滤器"))
-            tvNrCount = makeValue("已选: 0 个系统调用"); addView(tvNrCount)
-            tvNrList = makeValue("NR列表: (空)").apply {
-                maxLines = 10
-                ellipsize = TextUtils.TruncateAt.END
-            }; addView(tvNrList)
-        })
-
-        // Preset quick-apply
-        col.addView(makeCard {
-            addView(makeLabel("快速应用预设"))
-            StatusParser.presets.forEach { preset ->
-                addView(Button(this@MainActivity).apply {
-                    text = "${preset.name}: ${preset.description}"
-                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
-                    isAllCaps = false
-                    setOnClickListener {
-                        vm.selectedPreset = preset.id
-                        vm.applyPreset(preset.id)
-                        showToast("已应用: ${preset.name}")
-                    }
-                    layoutParams = LinearLayout.LayoutParams(
-                        ViewGroup.LayoutParams.MATCH_PARENT,
-                        ViewGroup.LayoutParams.WRAP_CONTENT
-                    ).apply { topMargin = dp(4) }
-                })
-            }
-        })
-
-        // Manual NR add/remove
-        col.addView(makeCard {
-            addView(makeLabel("手动管理 NR"))
-            val etNr = EditText(this@MainActivity).apply {
-                hint = "输入 NR 编号 (如 56)"
-                inputType = android.text.InputType.TYPE_CLASS_NUMBER
-            }
-            addView(etNr)
-
-            val row = LinearLayout(this@MainActivity).apply {
-                orientation = LinearLayout.HORIZONTAL
-            }
-            row.addView(Button(this@MainActivity).apply {
-                text = "添加"
-                setOnClickListener {
-                    val nr = etNr.text.toString().toIntOrNull()
-                    if (nr != null) { vm.addNr(nr); etNr.text.clear() }
-                }
-                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-            })
-            row.addView(Button(this@MainActivity).apply {
-                text = "移除"
-                setOnClickListener {
-                    val nr = etNr.text.toString().toIntOrNull()
-                    if (nr != null) { vm.removeNr(nr); etNr.text.clear() }
-                }
-                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-            })
-            addView(row)
-        })
-
-        sv.addView(col)
-        return sv
-    }
-
-    /* ══════════════════════════════════════════════════════════════
-     *  TAB 3: 事件 (Events)
-     * ══════════════════════════════════════════════════════════════ */
-
-    private fun buildEventsTab(): View {
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setBackgroundColor(cBg)
             layoutParams = ViewGroup.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT
             )
         }
 
-        // Top bar with count + export buttons
-        val topBar = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            setPadding(dp(12), dp(8), dp(12), dp(8))
-            setBackgroundColor(Color.WHITE)
-            gravity = Gravity.CENTER_VERTICAL
-        }
+        // Header
+        root.addView(createHeader())
 
-        tvEvtCount = TextView(this).apply {
-            text = "事件: 0"
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
-            setTextColor(cText)
-            typeface = Typeface.DEFAULT_BOLD
-            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-        }
-        topBar.addView(tvEvtCount)
+        // Tab bar
+        tabHost = createTabBar()
+        root.addView(tabHost)
 
-        topBar.addView(Button(this).apply {
-            text = "CSV"
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
-            isAllCaps = false
-            setOnClickListener { exportCsv() }
-            layoutParams = LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-            ).apply { marginStart = dp(4) }
-        })
-
-        topBar.addView(Button(this).apply {
-            text = "JSON"
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
-            isAllCaps = false
-            setOnClickListener { exportJson() }
-            layoutParams = LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-            ).apply { marginStart = dp(4) }
-        })
-
-        topBar.addView(Button(this).apply {
-            text = "清空"
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
-            setTextColor(cRed)
-            isAllCaps = false
-            setOnClickListener { vm.clearEvents() }
-            layoutParams = LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-            ).apply { marginStart = dp(4) }
-        })
-
-        root.addView(topBar)
-
-        // Event list in ScrollView
-        scrollEvents = ScrollView(this).apply {
+        // Content frame
+        contentFrame = FrameLayout(this).apply {
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f
             )
         }
-        llEventList = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(8), dp(4), dp(8), dp(8))
-        }
-        scrollEvents.addView(llEventList)
-        root.addView(scrollEvents)
+        root.addView(contentFrame)
 
-        return root
+        // Create all tab content views
+        controlView = createControlTab()
+        eventsView = createEventsTab()
+        filterView = createFilterTab()
+        settingsView = createSettingsTab()
+
+        // Show control tab by default
+        switchTab(0)
+
+        setContentView(root)
+
+        // Observe data
+        observeViewModel()
+
+        // Initial status refresh
+        vm.refreshStatus()
     }
 
-    /* ══════════════════════════════════════════════════════════════
-     *  TAB 4: 设置 (Settings)
-     * ══════════════════════════════════════════════════════════════ */
+    // ---- Header ----
 
-    private fun buildSettingsTab(): View {
-        val sv = ScrollView(this).apply {
-            setBackgroundColor(cBg)
-            layoutParams = ViewGroup.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT
+    private fun createHeader(): LinearLayout {
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(16), dp(12), dp(16), dp(8))
+            setBackgroundColor(Color.parseColor("#1a237e"))
+
+            addView(TextView(this@MainActivity).apply {
+                text = "SVCMonitor v8.3"
+                setTextColor(Color.WHITE)
+                textSize = 20f
+                typeface = Typeface.DEFAULT_BOLD
+            })
+            addView(TextView(this@MainActivity).apply {
+                text = "ARM64 SVC Syscall Monitor -- Pixel 6 / Android 12"
+                setTextColor(Color.parseColor("#b0bec5"))
+                textSize = 12f
+            })
+        }
+    }
+
+    // ---- Tab Bar ----
+
+    private val tabNames = arrayOf("Control", "Events", "Filter", "Settings")
+    private val tabButtons = mutableListOf<Button>()
+    private var currentTab = 0
+
+    private fun createTabBar(): LinearLayout {
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setBackgroundColor(Color.parseColor("#283593"))
+
+            for (i in tabNames.indices) {
+                val btn = Button(this@MainActivity).apply {
+                    text = tabNames[i]
+                    setTextColor(Color.WHITE)
+                    textSize = 13f
+                    isAllCaps = false
+                    setBackgroundColor(Color.TRANSPARENT)
+                    layoutParams = LinearLayout.LayoutParams(0, dp(44), 1f)
+                    setOnClickListener { switchTab(i) }
+                }
+                tabButtons.add(btn)
+                addView(btn)
+            }
+        }
+    }
+
+    private fun switchTab(index: Int) {
+        currentTab = index
+        contentFrame.removeAllViews()
+        val view = when (index) {
+            0 -> controlView
+            1 -> eventsView
+            2 -> filterView
+            3 -> settingsView
+            else -> controlView
+        }
+        contentFrame.addView(view)
+
+        tabButtons.forEachIndexed { i, btn ->
+            if (i == index) {
+                btn.setBackgroundColor(Color.parseColor("#3949ab"))
+                btn.typeface = Typeface.DEFAULT_BOLD
+            } else {
+                btn.setBackgroundColor(Color.TRANSPARENT)
+                btn.typeface = Typeface.DEFAULT
+            }
+        }
+    }
+
+    // ---- Control Tab ----
+
+    private fun createControlTab(): ScrollView {
+        val scroll = ScrollView(this)
+        val layout = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(16), dp(12), dp(16), dp(12))
+        }
+
+        layout.addView(sectionTitle("Quick Start"))
+        layout.addView(buttonRow(
+            actionButton("一键监控", Color.parseColor("#3949ab")) {
+                if (vm.selectedApp.value == null) {
+                    showAppPicker()
+                } else {
+                    vm.startMonitoring()
+                }
+            },
+            actionButton("选择目标", Color.parseColor("#546e7a")) { showAppPicker() }
+        ))
+        layout.addView(spacer())
+
+        // Status section
+        layout.addView(sectionTitle("Module Status"))
+        statusText = TextView(this).apply {
+            text = "Loading..."
+            textSize = 13f
+            setBackgroundColor(Color.parseColor("#f5f5f5"))
+            setPadding(dp(12), dp(8), dp(12), dp(8))
+            typeface = Typeface.MONOSPACE
+        }
+        layout.addView(statusText)
+        layout.addView(spacer())
+
+        // Action buttons
+        layout.addView(sectionTitle("Actions"))
+
+        val btnRow1 = buttonRow(
+            actionButton("Enable", Color.parseColor("#2e7d32")) { vm.startMonitoring() },
+            actionButton("Disable", Color.parseColor("#c62828")) { vm.stopMonitoring() }
+        )
+        layout.addView(btnRow1)
+
+        val btnRow2 = buttonRow(
+            actionButton("Poll Now", Color.parseColor("#1565c0")) { vm.pollOnce() },
+            actionButton("Refresh", Color.parseColor("#4527a0")) { vm.refreshStatus() }
+        )
+        layout.addView(btnRow2)
+
+        val btnRow3 = buttonRow(
+            actionButton("Clear", Color.parseColor("#ef6c00")) { vm.clearEvents() },
+            actionButton("Tier2 ON", Color.parseColor("#00838f")) { vm.setTier2(true) }
+        )
+        layout.addView(btnRow3)
+        layout.addView(spacer())
+
+        // Preset buttons
+        layout.addView(sectionTitle("Presets"))
+        for (preset in Preset.ALL_PRESETS) {
+            layout.addView(presetButton(preset))
+        }
+        layout.addView(spacer())
+
+        // Export buttons
+        layout.addView(sectionTitle("Export"))
+        val exportRow = buttonRow(
+            actionButton("CSV", Color.parseColor("#558b2f")) { vm.exportCsv() },
+            actionButton("JSON", Color.parseColor("#6a1b9a")) { vm.exportJson() }
+        )
+        layout.addView(exportRow)
+        layout.addView(spacer())
+
+        // Log
+        layout.addView(sectionTitle("Log"))
+        logText = TextView(this).apply {
+            text = ""
+            textSize = 11f
+            typeface = Typeface.MONOSPACE
+            setBackgroundColor(Color.parseColor("#263238"))
+            setTextColor(Color.parseColor("#b2ff59"))
+            setPadding(dp(8), dp(8), dp(8), dp(8))
+            maxLines = 200
+            ellipsize = TextUtils.TruncateAt.END
+        }
+        layout.addView(logText)
+
+        scroll.addView(layout)
+        return scroll
+    }
+
+    // ---- Events Tab ----
+
+    private fun createEventsTab(): LinearLayout {
+        val layout = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(8), dp(8), dp(8), dp(8))
+        }
+
+        eventsCountText = TextView(this).apply {
+            text = "Events: 0"
+            textSize = 14f
+            typeface = Typeface.DEFAULT_BOLD
+            setPadding(dp(8), dp(4), dp(8), dp(4))
+        }
+        layout.addView(eventsCountText)
+
+        val scroll = ScrollView(this).apply {
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f
             )
         }
-
-        val col = LinearLayout(this).apply {
+        eventsListLayout = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(16), dp(12), dp(16), dp(16))
         }
+        scroll.addView(eventsListLayout)
+        layout.addView(scroll)
 
-        // SuperKey setting
-        col.addView(makeCard {
-            addView(makeLabel("SuperKey"))
-            tvSuperKey = EditText(this@MainActivity).apply {
-                setText(KpmBridge.getSuperKey())
-                hint = "输入 SuperKey"
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
-                inputType = android.text.InputType.TYPE_CLASS_TEXT or
-                        android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
-            }
-            addView(tvSuperKey)
-            addView(Button(this@MainActivity).apply {
-                text = "保存 SuperKey"
-                setOnClickListener {
-                    val key = tvSuperKey.text.toString().trim()
-                    if (key.isNotEmpty()) {
-                        KpmBridge.setSuperKey(key)
-                        showToast("SuperKey 已更新")
-                    }
-                }
-            })
-        })
-
-        // Tier2 toggle
-        col.addView(makeCard {
-            addView(makeLabel("Tier-2 扩展 Hook"))
-            addView(TextView(this@MainActivity).apply {
-                text = "启用后额外 Hook 24 个系统调用\n包括: mkdirat, unlinkat, renameat, statfs, faccessat, " +
-                        "getsockname, getsockopt, shutdown, sendmsg, recvmsg, accept4, ppoll, " +
-                        "eventfd2, timerfd, signalfd4, seccomp, bpf, getrandom, prlimit64 等"
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
-                setTextColor(cSecondary)
-            })
-            switchTier2 = Switch(this@MainActivity).apply {
-                text = "启用 Tier-2"
-                setOnCheckedChangeListener { _, checked ->
-                    vm.setTier2(checked)
-                }
-                layoutParams = LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT,
-                    ViewGroup.LayoutParams.WRAP_CONTENT
-                ).apply { topMargin = dp(8) }
-            }
-            addView(switchTier2)
-        })
-
-        // About
-        col.addView(makeCard {
-            addView(makeLabel("关于"))
-            addView(makeValue("SVCMonitor v8.1.0"))
-            addView(makeValue("ARM64 SVC 系统调用监控工具"))
-            addView(makeValue("支持 50+ 系统调用深度参数解析"))
-            addView(makeValue("目标: Pixel 6 / Android 12 / APatch"))
-        })
-
-        sv.addView(col)
-        return sv
+        return layout
     }
 
-    /* ══════════════════════════════════════════════════════════════
-     *  OBSERVE VIEW MODEL
-     * ══════════════════════════════════════════════════════════════ */
+    // ---- Filter Tab ----
+
+    private fun createFilterTab(): ScrollView {
+        val scroll = ScrollView(this)
+        val layout = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(16), dp(12), dp(16), dp(12))
+        }
+
+        layout.addView(sectionTitle("Syscall Filter"))
+        layout.addView(TextView(this).apply {
+            text = "Toggle individual syscalls to monitor:"
+            textSize = 13f
+            setPadding(0, 0, 0, dp(8))
+        })
+
+        // NR input row
+        val inputRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+        }
+        val nrInput = EditText(this).apply {
+            hint = "NR (e.g. 56)"
+            inputType = android.text.InputType.TYPE_CLASS_NUMBER
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+        }
+        inputRow.addView(nrInput)
+        inputRow.addView(Button(this).apply {
+            text = "Add"
+            setOnClickListener {
+                val nr = nrInput.text.toString().toIntOrNull()
+                if (nr != null) {
+                    vm.addNr(nr)
+                    vm.uiLog("enable_nr $nr")
+                    vm.refreshStatus()
+                }
+            }
+        })
+        inputRow.addView(Button(this).apply {
+            text = "Remove"
+            setOnClickListener {
+                val nr = nrInput.text.toString().toIntOrNull()
+                if (nr != null) {
+                    vm.removeNr(nr)
+                    vm.uiLog("disable_nr $nr")
+                    vm.refreshStatus()
+                }
+            }
+        })
+        layout.addView(inputRow)
+        layout.addView(spacer())
+
+        // Syscall categories
+        for (cat in StatusParser.SYSCALL_CATEGORIES) {
+            layout.addView(sectionTitle(cat.name))
+            for (entry in cat.entries) {
+                layout.addView(createSyscallRow(entry))
+            }
+        }
+
+        scroll.addView(layout)
+        return scroll
+    }
+
+    private fun createSyscallRow(entry: StatusParser.SyscallEntry): LinearLayout {
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(4), dp(2), dp(4), dp(2))
+
+            addView(TextView(this@MainActivity).apply {
+                text = "${entry.nr}"
+                textSize = 12f
+                typeface = Typeface.MONOSPACE
+                minWidth = dp(40)
+            })
+            val nameView = TextView(this@MainActivity).apply {
+                text = entry.name
+                textSize = 13f
+                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+            }
+            syscallNameViews[entry.nr] = nameView
+            addView(nameView)
+            addView(Button(this@MainActivity).apply {
+                text = "+"
+                textSize = 11f
+                minimumWidth = dp(40)
+                minimumHeight = dp(32)
+                setPadding(dp(4), 0, dp(4), 0)
+                setOnClickListener {
+                    vm.addNr(entry.nr)
+                    vm.uiLog("enable_nr ${entry.nr} (${entry.name})")
+                    vm.refreshStatus()
+                }
+            })
+            addView(Button(this@MainActivity).apply {
+                text = "-"
+                textSize = 11f
+                minimumWidth = dp(40)
+                minimumHeight = dp(32)
+                setPadding(dp(4), 0, dp(4), 0)
+                setOnClickListener {
+                    vm.removeNr(entry.nr)
+                    vm.uiLog("disable_nr ${entry.nr} (${entry.name})")
+                    vm.refreshStatus()
+                }
+            })
+        }
+    }
+
+    // ---- Settings Tab ----
+
+    private fun createSettingsTab(): ScrollView {
+        val scroll = ScrollView(this)
+        val layout = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(16), dp(12), dp(16), dp(12))
+        }
+
+        // SuperKey
+        layout.addView(sectionTitle("SuperKey"))
+        val keyInput = EditText(this).apply {
+            hint = "Enter SuperKey"
+            setText(KpmBridge.getSuperKey())
+            inputType = android.text.InputType.TYPE_CLASS_TEXT or
+                        android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
+        }
+        layout.addView(keyInput)
+        layout.addView(Button(this).apply {
+            text = "Update SuperKey"
+            setOnClickListener {
+                val key = keyInput.text.toString().trim()
+                if (key.isNotEmpty()) {
+                    vm.setSuperKey(key)
+                    toast("SuperKey updated")
+                }
+            }
+        })
+        layout.addView(spacer())
+
+        // App selection
+        layout.addView(sectionTitle("Target App (UID Filter)"))
+        layout.addView(TextView(this).apply {
+            text = "Select an app to monitor only its syscalls:"
+            textSize = 13f
+        })
+        layout.addView(Button(this).apply {
+            text = "Select App..."
+            setOnClickListener { showAppPicker() }
+        })
+        layout.addView(spacer())
+
+        // Tier2
+        layout.addView(sectionTitle("Tier2 Features"))
+        layout.addView(featureRow("Caller Address", "Records LR register for each syscall") {
+            vm.setTier2(true)
+        })
+        layout.addView(featureRow("FD Path Resolution", "Resolves file descriptor to path") {
+            vm.setTier2(true)
+        })
+        layout.addView(featureRow("Clone Fn Capture", "Captures clone function pointer") {
+            vm.setTier2(true)
+        })
+        layout.addView(spacer())
+
+        // Info
+        layout.addView(sectionTitle("About"))
+        layout.addView(infoRow("Version", "8.3.0"))
+        layout.addView(infoRow("Device", "Pixel 6 (oriole)"))
+        layout.addView(infoRow("Kernel", "5.10.43 ARM64"))
+        layout.addView(infoRow("Android", "12 (API 31)"))
+        layout.addView(infoRow("Tier1 Hooks", "44 syscalls"))
+        layout.addView(infoRow("Tier2 Hooks", "25 syscalls"))
+        layout.addView(infoRow("Buffer", "1024 events / 128KB output"))
+
+        scroll.addView(layout)
+        return scroll
+    }
+
+    // ---- ViewModel Observers ----
 
     private fun observeViewModel() {
-        // Status updates
         vm.status.observe(this) { s ->
-            if (s != null) {
-                tvVersion.text = "版本: ${s.version}"
-                tvUid.text = "目标 UID: ${if (s.targetUid >= 0) s.targetUid.toString() else "全部"}"
-                tvStatus.text = if (s.enabled) "已启用" else "已禁用"
-                tvStatus.setTextColor(if (s.enabled) cGreen else cRed)
-                tvNrCount.text = "已选: ${s.nrCount} 个系统调用"
-                tvNrList.text = "NR列表: ${s.nrList.joinToString(", ") { "${StatusParser.nrToName(it)}($it)" }}"
-                switchTier2.isChecked = s.tier2
+            statusText.text = buildString {
+                append("Enabled:   ${s.enabled}\n")
+                append("UID:       ${s.uid}\n")
+                append("Tier2:     ${s.tier2}\n")
+                append("Total:     ${s.eventsTotal}\n")
+                append("Buffered:  ${s.eventsBuffered}\n")
+                append("Tier1:     ${if (s.tier1Hooked) "hooked" else "off"}\n")
+                append("Tier2:     ${if (s.tier2Hooked) "hooked" else "off"}\n")
+                append("Version:   ${s.version}\n")
+                append("NR Filter: ${s.nrFilter.take(60)}${if (s.nrFilter.length > 60) "..." else ""}")
             }
+            enabledNrSet = parseNrFilter(s.nrFilter)
+            refreshSyscallHighlights()
         }
 
-        // Monitoring state
-        vm.monitoring.observe(this) { mon ->
-            if (mon) {
-                tvMonState.text = "状态: 监控中"
-                tvMonState.setTextColor(cGreen)
-                btnStartStop.text = "停止监控"
-                btnStartStop.setBackgroundColor(cRed)
-            } else {
-                tvMonState.text = "状态: 未启动"
-                tvMonState.setTextColor(cSecondary)
-                btnStartStop.text = "一键启用监控"
-                btnStartStop.setBackgroundColor(cGreen)
-            }
-        }
-
-        // Event count
-        vm.eventCount.observe(this) { count ->
-            tvEventCount.text = "事件数: $count"
-            tvEvtCount.text = "事件: $count"
-        }
-
-        // Events list
         vm.events.observe(this) { events ->
-            updateEventList(events)
+            eventsCountText.text = "Events: ${events.size}"
+            eventsListLayout.removeAllViews()
+            // Show last 100 events in reverse order
+            val recent = events.takeLast(100).reversed()
+            for (ev in recent) {
+                eventsListLayout.addView(createEventCard(ev))
+            }
         }
 
-        // Toast
-        vm.toast.observe(this) { msg ->
-            if (msg != null) {
-                showToast(msg)
-                vm.toastConsumed()
-            }
+        vm.log.observe(this) { text ->
+            logText.text = text
         }
     }
 
-    /* ══════════════════════════════════════════════════════════════
-     *  EVENT LIST rendering
-     * ══════════════════════════════════════════════════════════════ */
+    // ---- Event Card ----
 
-    private fun updateEventList(events: List<StatusParser.SvcEvent>) {
-        llEventList.removeAllViews()
+    private fun createEventCard(ev: SvcEvent): LinearLayout {
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(Color.parseColor("#fafafa"))
+            setPadding(dp(8), dp(6), dp(8), dp(6))
+            val lp = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            )
+            lp.bottomMargin = dp(4)
+            layoutParams = lp
 
-        // Show last 100 events in reverse chronological order
-        val display = events.take(100)
-        if (display.isEmpty()) {
-            llEventList.addView(TextView(this).apply {
-                text = "暂无事件。启动监控后事件将自动显示。"
-                setTextColor(cSecondary)
-                setPadding(dp(8), dp(16), dp(8), dp(16))
-                gravity = Gravity.CENTER
-            })
-            return
-        }
-
-        display.forEach { evt ->
-            val card = LinearLayout(this).apply {
-                orientation = LinearLayout.VERTICAL
-                setBackgroundColor(cCard)
-                setPadding(dp(10), dp(8), dp(10), dp(8))
-                layoutParams = LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT,
-                    ViewGroup.LayoutParams.WRAP_CONTENT
-                ).apply {
-                    bottomMargin = dp(4)
-                }
-            }
-
-            // Row 1: syscall name + NR + category
-            val row1 = LinearLayout(this).apply {
-                orientation = LinearLayout.HORIZONTAL
-                gravity = Gravity.CENTER_VERTICAL
-            }
-            row1.addView(TextView(this).apply {
-                text = "${evt.name}(${evt.nr})"
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
-                setTextColor(cPrimary)
+            // Header: seq, nr, name
+            addView(TextView(this@MainActivity).apply {
+                text = "#${ev.seq} NR=${ev.nr} ${ev.name} [pid=${ev.pid} uid=${ev.uid}]"
+                textSize = 12f
                 typeface = Typeface.DEFAULT_BOLD
-                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+                setTextColor(Color.parseColor("#1a237e"))
             })
-            row1.addView(TextView(this).apply {
-                text = StatusParser.syscallCategory(evt.nr)
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
-                setTextColor(cAccent)
-                setPadding(dp(6), dp(2), dp(6), dp(2))
+            // Comm
+            addView(TextView(this@MainActivity).apply {
+                text = "comm=${ev.comm} ${ev.desc}"
+                textSize = 11f
+                typeface = Typeface.MONOSPACE
+                maxLines = 2
+                ellipsize = TextUtils.TruncateAt.END
             })
-            card.addView(row1)
-
-            // Row 2: pid/uid/comm
-            card.addView(TextView(this).apply {
-                text = "pid=${evt.pid} uid=${evt.uid} comm=${evt.comm}"
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
-                setTextColor(cSecondary)
-            })
-
-            // Row 3: description (the deep-parsed args)
-            if (evt.desc.isNotEmpty()) {
-                card.addView(TextView(this).apply {
-                    text = evt.desc
-                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
-                    setTextColor(cText)
-                    typeface = Typeface.MONOSPACE
-                    maxLines = 6
-                    ellipsize = TextUtils.TruncateAt.END
-                    setPadding(0, dp(4), 0, 0)
+            // Extra info
+            if (ev.caller != "0x0" && ev.caller.isNotEmpty()) {
+                addView(TextView(this@MainActivity).apply {
+                    text = "caller=${ev.caller} pc=${ev.pc}"
+                    textSize = 10f
+                    setTextColor(Color.parseColor("#666666"))
+                })
+            }
+            if (ev.fdPath.isNotEmpty()) {
+                addView(TextView(this@MainActivity).apply {
+                    text = "fd_path=${ev.fdPath}"
+                    textSize = 10f
+                    setTextColor(Color.parseColor("#00695c"))
                 })
             }
 
-            // Click for detail dialog
-            card.setOnClickListener {
-                showEventDetail(evt)
+            setOnClickListener {
+                showEventDetail(ev)
             }
-
-            llEventList.addView(card)
         }
     }
 
-    private fun showEventDetail(evt: StatusParser.SvcEvent) {
-        val detail = buildString {
-            appendLine("═══ 系统调用详情 ═══")
-            appendLine()
-            appendLine("调用号: ${evt.nr} (${evt.name})")
-            appendLine("分类: ${StatusParser.syscallCategory(evt.nr)}")
-            appendLine("PID: ${evt.pid}")
-            appendLine("UID: ${evt.uid}")
-            appendLine("进程名: ${evt.comm}")
-            appendLine()
-            appendLine("═══ 原始参数 ═══")
-            appendLine("  a0: 0x${java.lang.Long.toHexString(evt.a0)} (${evt.a0})")
-            appendLine("  a1: 0x${java.lang.Long.toHexString(evt.a1)} (${evt.a1})")
-            appendLine("  a2: 0x${java.lang.Long.toHexString(evt.a2)} (${evt.a2})")
-            appendLine("  a3: 0x${java.lang.Long.toHexString(evt.a3)} (${evt.a3})")
-            appendLine("  a4: 0x${java.lang.Long.toHexString(evt.a4)} (${evt.a4})")
-            appendLine("  a5: 0x${java.lang.Long.toHexString(evt.a5)} (${evt.a5})")
-            appendLine()
-            appendLine("═══ 解析结果 ═══")
-            appendLine(evt.desc)
-        }
+    private fun showEventDetail(ev: SvcEvent) {
+        lifecycleScope.launch {
+            val pcAddr = parseHex(ev.pc)
+            val callerAddr = parseHex(ev.caller)
+            val pcResolved = resolveAddress(ev.pid, pcAddr)
+            val callerResolved = resolveAddress(ev.pid, callerAddr)
+            val cloneResolved = if (ev.cloneFn != 0L) resolveAddress(ev.pid, ev.cloneFn) else ""
 
+            val detail = buildString {
+                appendLine("#${ev.seq}  NR=${ev.nr}  ${ev.name}")
+                appendLine("pid=${ev.pid}  uid=${ev.uid}  comm=${ev.comm}")
+                if (ev.desc.isNotEmpty()) appendLine("desc: ${ev.desc}")
+                if (ev.fdPath.isNotEmpty()) appendLine("fdPath: ${ev.fdPath}")
+                appendLine()
+                appendLine("pc: ${ev.pc}${if (pcResolved.isNotEmpty()) "  →  $pcResolved" else ""}")
+                if (ev.caller.isNotEmpty() && ev.caller != "0x0") {
+                    appendLine("caller: ${ev.caller}${if (callerResolved.isNotEmpty()) "  →  $callerResolved" else ""}")
+                }
+                if (ev.nr == 220) {
+                    appendLine()
+                    appendLine("clone stack: 0x${java.lang.Long.toHexString(ev.a1)}")
+                    if (ev.cloneFn != 0L) {
+                        appendLine("clone fn: 0x${java.lang.Long.toHexString(ev.cloneFn)}${if (cloneResolved.isNotEmpty()) "  →  $cloneResolved" else ""}")
+                    }
+                }
+            }
+
+            AlertDialog.Builder(this@MainActivity)
+                .setTitle("${ev.name}(${ev.nr})")
+                .setMessage(detail)
+                .setPositiveButton("关闭", null)
+                .setNeutralButton("复制") { _, _ ->
+                    val clip = getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                    clip.setPrimaryClip(android.content.ClipData.newPlainText("svc_event", detail))
+                    toast("已复制到剪贴板")
+                }
+                .show()
+        }
+    }
+
+    private fun parseHex(s: String?): Long {
+        if (s.isNullOrBlank()) return 0L
+        val t = s.trim()
+        return try {
+            if (t.startsWith("0x") || t.startsWith("0X")) t.substring(2).toLong(16) else t.toLong(16)
+        } catch (_: Exception) {
+            0L
+        }
+    }
+
+    private suspend fun resolveAddress(pid: Int, addr: Long): String {
+        if (pid <= 0 || addr == 0L) return ""
+        val maps = KpmBridge.readProcMaps(pid)
+        if (maps.isBlank()) return ""
+        val entry = findMapEntry(maps, addr) ?: return "unmapped@0x${java.lang.Long.toHexString(addr)}"
+        val name = if (entry.path.isNotBlank()) entry.path.substringAfterLast('/') else "[anon]"
+        return "$name+0x${java.lang.Long.toHexString(entry.fileOffset)}"
+    }
+
+    private fun findMapEntry(maps: String, addr: Long): MapEntry? {
+        val lines = maps.split('\n')
+        for (line in lines) {
+            if (line.isBlank()) continue
+            val parts = line.trim().split(Regex("\\s+"), limit = 6)
+            if (parts.size < 3) continue
+            val range = parts[0]
+            val offStr = parts[2]
+            val path = if (parts.size >= 6) parts[5] else ""
+            val dash = range.indexOf('-')
+            if (dash <= 0) continue
+            val start = range.substring(0, dash).toLongOrNull(16) ?: continue
+            val end = range.substring(dash + 1).toLongOrNull(16) ?: continue
+            if (addr < start || addr >= end) continue
+            val offset = offStr.toLongOrNull(16) ?: 0L
+            val fileOffset = (addr - start) + offset
+            return MapEntry(start, end, fileOffset, path)
+        }
+        return null
+    }
+
+    // ---- App Picker Dialog ----
+
+    private fun showAppPicker() {
+        val apps = AppResolver.getAllApps(this)
+        val names = apps.map { it.toString() }.toTypedArray()
         AlertDialog.Builder(this)
-            .setTitle("${evt.name}(${evt.nr})")
-            .setMessage(detail)
-            .setPositiveButton("确定", null)
-            .setNeutralButton("复制") { _, _ ->
-                val clip = getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager
-                clip.setPrimaryClip(android.content.ClipData.newPlainText("svc_event", detail))
-                showToast("已复制到剪贴板")
+            .setTitle("Select Target App")
+            .setItems(names) { _, which ->
+                val app = apps[which]
+                vm.selectApp(app)
+                vm.uiLog("selected ${app.label} uid=${app.uid}")
+            }
+            .setNegativeButton("Clear Filter") { _, _ ->
+                vm.selectApp(null)
+                vm.uiLog("uid filter cleared")
             }
             .show()
     }
 
-    /* ══════════════════════════════════════════════════════════════
-     *  START/STOP click handler
-     * ══════════════════════════════════════════════════════════════ */
+    // ---- UI Helpers ----
 
-    private fun onStartStopClick() {
-        if (vm.monitoring.value == true) {
-            vm.stopMonitoring()
-        } else {
-            val app = vm.selectedApp
-            if (app == null) {
-                showToast("请先选择目标应用", isError = true)
-                return
+    private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
+
+    private fun toast(msg: String) {
+        vm.uiLog(msg)
+    }
+
+    private fun parseNrFilter(s: String): Set<Int> {
+        if (s.isBlank()) return emptySet()
+        return s.split(',')
+            .mapNotNull { it.trim().toIntOrNull() }
+            .toSet()
+    }
+
+    private fun refreshSyscallHighlights() {
+        for ((nr, tv) in syscallNameViews) {
+            if (enabledNrSet.contains(nr)) {
+                tv.setTextColor(Color.parseColor("#1b5e20"))
+                tv.typeface = Typeface.DEFAULT_BOLD
+            } else {
+                tv.setTextColor(Color.BLACK)
+                tv.typeface = Typeface.DEFAULT
             }
-            vm.startMonitoring(app.uid, vm.selectedPreset)
         }
     }
 
-    /* ══════════════════════════════════════════════════════════════
-     *  UI HELPERS
-     * ══════════════════════════════════════════════════════════════ */
-
-    private fun dp(v: Int): Int =
-        TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, v.toFloat(), resources.displayMetrics).toInt()
-
-    private fun makeCard(block: LinearLayout.() -> Unit): LinearLayout {
-        return LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setBackgroundColor(cCard)
-            setPadding(dp(14), dp(12), dp(14), dp(12))
-            layoutParams = LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-            ).apply {
-                bottomMargin = dp(10)
-            }
-            elevation = dp(2).toFloat()
-            block()
-        }
-    }
-
-    private fun makeLabel(text: String): TextView {
+    private fun sectionTitle(text: String): TextView {
         return TextView(this).apply {
             this.text = text
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
-            setTextColor(cPrimary)
+            textSize = 16f
             typeface = Typeface.DEFAULT_BOLD
-            setPadding(0, 0, 0, dp(6))
+            setTextColor(Color.parseColor("#1a237e"))
+            setPadding(0, dp(8), 0, dp(4))
         }
     }
 
-    private fun makeValue(text: String): TextView {
-        return TextView(this).apply {
+    private fun spacer(): View {
+        return View(this).apply {
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(12)
+            )
+        }
+    }
+
+    private fun actionButton(text: String, bgColor: Int, onClick: () -> Unit): Button {
+        return Button(this).apply {
             this.text = text
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
-            setTextColor(cText)
-            setPadding(0, dp(2), 0, dp(2))
+            setTextColor(Color.WHITE)
+            setBackgroundColor(bgColor)
+            isAllCaps = false
+            setOnClickListener { onClick() }
         }
     }
 
-    private fun showToast(message: String, isError: Boolean = false, duration: Int = Toast.LENGTH_SHORT) {
-        val key = KpmBridge.getSuperKey()
-        val safeMsg = if (key.isNotBlank() && message.contains(key)) {
-            message.replace(key, "<SUPERKEY_REDACTED>")
-        } else {
-            message
-        }
-        if (isError) {
-            Log.e(toastLogTag, "TOAST $safeMsg")
-        } else {
-            Log.i(toastLogTag, "TOAST $safeMsg")
-        }
-        Toast.makeText(this, message, duration).show()
-    }
-
-    private fun exportCsv() {
-        val events = vm.events.value ?: emptyList()
-        if (events.isEmpty()) {
-            showToast("没有事件可导出")
-            return
-        }
-        try {
-            val file = logExporter.exportCsv(events)
-            shareFile(file, "text/csv")
-        } catch (e: Exception) {
-            showToast("导出失败: ${e.message}", isError = true, duration = Toast.LENGTH_LONG)
+    private fun buttonRow(vararg buttons: Button): LinearLayout {
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(0, dp(4), 0, dp(4))
+            for (btn in buttons) {
+                val lp = LinearLayout.LayoutParams(0, dp(44), 1f)
+                lp.marginEnd = dp(8)
+                btn.layoutParams = lp
+                addView(btn)
+            }
         }
     }
 
-    private fun exportJson() {
-        val events = vm.events.value ?: emptyList()
-        if (events.isEmpty()) {
-            showToast("没有事件可导出")
-            return
-        }
-        try {
-            val file = logExporter.exportJson(events)
-            shareFile(file, "application/json")
-        } catch (e: Exception) {
-            showToast("导出失败: ${e.message}", isError = true, duration = Toast.LENGTH_LONG)
+    private fun presetButton(preset: Preset): Button {
+        return Button(this).apply {
+            text = "${preset.id}. ${preset.name} - ${preset.description}"
+            textSize = 12f
+            isAllCaps = false
+            gravity = Gravity.START or Gravity.CENTER_VERTICAL
+            setPadding(dp(12), dp(4), dp(12), dp(4))
+            setOnClickListener {
+                vm.selectPreset(preset)
+                vm.uiLog("preset ${preset.name}")
+            }
         }
     }
 
-    private fun shareFile(file: File, mimeType: String) {
-        val uri = FileProvider.getUriForFile(this, "${packageName}.fileprovider", file)
-        val intent = Intent(Intent.ACTION_SEND).apply {
-            type = mimeType
-            putExtra(Intent.EXTRA_STREAM, uri)
-            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    private fun featureRow(title: String, desc: String, onEnable: () -> Unit): LinearLayout {
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(4), dp(4), dp(4), dp(4))
+
+            addView(LinearLayout(this@MainActivity).apply {
+                orientation = LinearLayout.VERTICAL
+                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+                addView(TextView(this@MainActivity).apply {
+                    text = title
+                    textSize = 14f
+                    typeface = Typeface.DEFAULT_BOLD
+                    setTextColor(Color.parseColor("#00838f"))
+                })
+                addView(TextView(this@MainActivity).apply {
+                    text = desc
+                    textSize = 11f
+                    setTextColor(Color.GRAY)
+                })
+            })
+
+            addView(Button(this@MainActivity).apply {
+                text = "Enable"
+                textSize = 12f
+                isAllCaps = false
+                setOnClickListener { onEnable() }
+            })
         }
-        startActivity(Intent.createChooser(intent, "分享"))
     }
 
-    override fun onDestroy() {
-        super.onDestroy()
-        vm.stopPolling()
+    private fun infoRow(label: String, value: String): LinearLayout {
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(dp(4), dp(2), dp(4), dp(2))
+            addView(TextView(this@MainActivity).apply {
+                text = "$label:"
+                textSize = 13f
+                typeface = Typeface.DEFAULT_BOLD
+                minWidth = dp(100)
+            })
+            addView(TextView(this@MainActivity).apply {
+                text = value
+                textSize = 13f
+            })
+        }
     }
 }

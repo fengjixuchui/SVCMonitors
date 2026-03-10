@@ -7,10 +7,15 @@ LD = $(CROSS_COMPILE)ld
 INCLUDE = -I$(KERNEL_DIR)/include \
           -I$(KERNEL_DIR)/patch/include \
           -I$(KERNEL_DIR)/linux/include \
-          -I$(KERNEL_DIR)/linux/arch/arm64/include
+          -I$(KERNEL_DIR)/linux/include/uapi \
+          -I$(KERNEL_DIR)/linux/arch/arm64/include \
+          -I$(KERNEL_DIR)/linux/tools/arch/arm64/include \
+          -I$(KERNEL_DIR)/linux/arch/arm64/include/uapi
 
 CFLAGS = -Wall -O2 -fno-pic -fno-stack-protector \
          -nostdlib -nostdinc -ffreestanding \
+         -fno-builtin -fno-tree-loop-distribute-patterns \
+         -fno-builtin-memset -fno-builtin-memcpy -fno-builtin-memmove -fno-builtin-memcmp \
          -mgeneral-regs-only \
          $(INCLUDE)
 

@@ -1,7 +1,7 @@
 {
     "logs": [
         {
-            "outputFile": "com.svcmonitor.app-mergeDebugResources-24:/values-en-rXC/values-en-rXC.xml",
+            "outputFile": "com.svcmonitor.app-mergeDebugResources-34:/values-en-rXC/values-en-rXC.xml",
             "map": [
                 {
                     "source": "/Users/bytedance/.gradle/caches/transforms-3/4e116a93cb58fedfe700f980927d2f70/transformed/core-1.12.0/res/values-en-rXC/values-en-rXC.xml",

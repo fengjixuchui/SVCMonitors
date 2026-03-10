@@ -1,15 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="com.svcmonitor.app"
-    android:versionCode="8"
-    android:versionName="8.0.0" >
+    android:versionCode="12"
+    android:versionName="9.0.0" >
 
     <uses-sdk
-        android:minSdkVersion="26"
+        android:minSdkVersion="31"
         android:targetSdkVersion="34" />
 
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
-    <uses-permission android:name="android.permission.INTERNET" />
 
     <permission
         android:name="com.svcmonitor.app.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION"
@@ -18,15 +17,13 @@
     <uses-permission android:name="com.svcmonitor.app.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION" />
 
     <application
-        android:allowBackup="true"
+        android:allowBackup="false"
         android:appComponentFactory="androidx.core.app.CoreComponentFactory"
         android:debuggable="true"
         android:extractNativeLibs="false"
-        android:icon="@android:drawable/sym_def_app_icon"
         android:label="@string/app_name"
-        android:roundIcon="@android:drawable/sym_def_app_icon"
         android:supportsRtl="true"
-        android:theme="@style/Theme.AppCompat.Light.DarkActionBar" >
+        android:theme="@style/Theme.SVCMonitor" >
         <activity
             android:name="com.svcmonitor.app.MainActivity"
             android:exported="true" >

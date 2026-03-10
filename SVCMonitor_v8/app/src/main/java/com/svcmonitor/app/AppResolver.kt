@@ -21,7 +21,7 @@ object AppResolver {
         cachedApps?.let { return it }
 
         val pm = ctx.packageManager
-        val apps = pm.getInstalledApplications(PackageManager.GET_META_DATA)
+        val apps = pm.getInstalledApplications(PackageManager.MATCH_ALL)
             .map { ai ->
                 AppInfo(
                     label = ai.loadLabel(pm).toString(),
@@ -35,6 +35,8 @@ object AppResolver {
         cachedApps = apps
         return apps
     }
+
+    fun getInstalledApps(ctx: Context): List<AppInfo> = getAllApps(ctx)
 
     fun searchApps(ctx: Context, query: String): List<AppInfo> {
         val q = query.lowercase()

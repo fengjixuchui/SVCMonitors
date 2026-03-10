@@ -1,6 +1,38 @@
 [
     {
-        "merged": "com.svcmonitor.app-merged_res-26:/xml_file_paths.xml.flat",
-        "source": "com.svcmonitor.app-main-28:/xml/file_paths.xml"
+        "merged": "com.svcmonitor.app-merged_res-36:/xml_file_paths.xml.flat",
+        "source": "com.svcmonitor.app-main-38:/xml/file_paths.xml"
+    },
+    {
+        "merged": "com.svcmonitor.app-merged_res-36:/layout_dialog_quick_start.xml.flat",
+        "source": "com.svcmonitor.app-main-38:/layout/dialog_quick_start.xml"
+    },
+    {
+        "merged": "com.svcmonitor.app-merged_res-36:/layout_dialog_event_detail.xml.flat",
+        "source": "com.svcmonitor.app-main-38:/layout/dialog_event_detail.xml"
+    },
+    {
+        "merged": "com.svcmonitor.app-merged_res-36:/layout_item_event.xml.flat",
+        "source": "com.svcmonitor.app-main-38:/layout/item_event.xml"
+    },
+    {
+        "merged": "com.svcmonitor.app-merged_res-36:/layout_activity_main.xml.flat",
+        "source": "com.svcmonitor.app-main-38:/layout/activity_main.xml"
+    },
+    {
+        "merged": "com.svcmonitor.app-merged_res-36:/menu_main_menu.xml.flat",
+        "source": "com.svcmonitor.app-main-38:/menu/main_menu.xml"
+    },
+    {
+        "merged": "com.svcmonitor.app-merged_res-36:/layout_dialog_settings.xml.flat",
+        "source": "com.svcmonitor.app-main-38:/layout/dialog_settings.xml"
+    },
+    {
+        "merged": "com.svcmonitor.app-merged_res-36:/drawable_bg_status_on.xml.flat",
+        "source": "com.svcmonitor.app-main-38:/drawable/bg_status_on.xml"
+    },
+    {
+        "merged": "com.svcmonitor.app-merged_res-36:/drawable_bg_status_off.xml.flat",
+        "source": "com.svcmonitor.app-main-38:/drawable/bg_status_off.xml"
     }
 ]

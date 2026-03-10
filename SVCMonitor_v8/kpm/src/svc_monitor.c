@@ -32,12 +32,15 @@
 #include <compiler.h>
 #include <kpmodule.h>
 #include <linux/printk.h>
-#include <uapi/asm-generic/unistd.h>
+#include <linux/kernel.h>
+#include <asm-generic/unistd.h>
 #include <linux/uaccess.h>
 #include <syscall.h>
 #include <linux/string.h>
 #include <kputils.h>
 #include <asm/current.h>
+#include <linux/sched.h>
+#include <asm/ptrace.h>
 
 KPM_NAME("svc_monitor");
 KPM_VERSION("8.1.0");
@@ -180,6 +183,8 @@ static const char *get_syscall_name(int nr)
 static volatile int g_enabled = 0;                  /* 0=paused, 1=active */
 static volatile int g_target_uid = -1;              /* -1=all, >=0=specific */
 static volatile unsigned long g_nr_bitmap[BITMAP_LONGS];
+static volatile unsigned int g_seq = 0;
+static volatile unsigned int g_total = 0;
 
 /* Hook tracking */
 #define HOOK_INLINE  1
@@ -194,11 +199,14 @@ typedef struct {
 
 /* Event record — expanded for detailed parsing */
 typedef struct {
+    unsigned int seq;
     int nr;
     int pid;
     int uid;
     char comm[16];
     unsigned long a0, a1, a2, a3, a4, a5;
+    unsigned long pc;
+    unsigned long caller;
     char desc[DESC_BUF_SIZE];
 } svc_event_t;
 
@@ -396,8 +404,13 @@ static int parse_sockaddr(char *buf, int blen, unsigned long uptr, int addrlen)
         char path[108];
         int plen = got - 2;
         if (plen > 107) plen = 107;
-        memcpy(path, sa + 2, plen);
-        path[plen] = '\0';
+        {
+            int i;
+            for (i = 0; i < plen; i++) {
+                path[i] = sa[2 + i];
+            }
+            path[plen] = '\0';
+        }
         if (path[0] == '\0' && plen > 1) {
             /* Abstract socket: replace leading null */
             path[0] = '@';
@@ -1358,6 +1371,8 @@ static void before_generic(hook_fargs4_t *args, void *udata)
     int uid;
     char desc[DESC_BUF_SIZE];
     unsigned long a0, a1, a2, a3, a4, a5;
+    unsigned long pc = 0;
+    unsigned long caller = 0;
 
     /* Fast rejection path */
     if (!g_enabled) return;
@@ -1375,6 +1390,14 @@ static void before_generic(hook_fargs4_t *args, void *udata)
     a4 = syscall_argn(args, 4);
     a5 = syscall_argn(args, 5);
 
+    if (has_syscall_wrapper) {
+        struct pt_regs *r = (struct pt_regs *)((hook_fargs0_t *)args)->args[0];
+        if (r) {
+            pc = (unsigned long)r->pc;
+            caller = (unsigned long)r->regs[30];
+        }
+    }
+
     /* Build detailed description */
     describe_args(nr, a0, a1, a2, a3, a4, a5, desc, sizeof(desc));
 
@@ -1382,17 +1405,20 @@ static void before_generic(hook_fargs4_t *args, void *udata)
     {
         int idx = g_ev_head;
         svc_event_t *ev = &g_events[idx];
+        ev->seq = ++g_seq;
         ev->nr = nr;
-        ev->pid = current->pid;
+        ev->pid = *(int *)((char *)current + task_struct_offset.pid_offset);
         /* Use a safer approach: get uid via official API */
         ev->uid = uid;
         ev->a0 = a0; ev->a1 = a1; ev->a2 = a2;
         ev->a3 = a3; ev->a4 = a4; ev->a5 = a5;
+        ev->pc = pc;
+        ev->caller = caller;
 
         /* Copy comm from task_struct */
         {
-            const char *p = (const char *)current + 2560;
             int ci;
+            const char *p = get_task_comm(current);
             for (ci = 0; ci < 15; ci++) {
                 ev->comm[ci] = p[ci];
                 if (!p[ci]) break;
@@ -1410,6 +1436,7 @@ static void before_generic(hook_fargs4_t *args, void *udata)
 
         g_ev_head = (idx + 1) % MAX_EVENTS;
         if (g_ev_count < MAX_EVENTS) g_ev_count++;
+        g_total++;
     }
 }
 
@@ -1567,47 +1594,50 @@ static void remove_tier2(void)
 /* ================================================================
  * Preset configurations
  * ================================================================ */
+static const int preset_re_basic[] = {56,48,78,221,222,226,198,203,117,167,29,134,279,280};
+static const int preset_re_full[] = {56,48,35,78,79,63,64,221,281,220,93,94,222,226,215,198,200,203,206,207,117,167,29,25,129,131,134,135,277,280,279,146,144,147,105,273,97,268,261,291};
+static const int preset_file[] = {56,57,48,35,78,79,80,61,63,64,62,34,38,276,53,54,291,43,27,5,8};
+static const int preset_net[] = {198,200,201,202,203,206,207,208,209,210,211,212,242};
+static const int preset_proc[] = {221,281,220,93,94,95,260,117,129,130,131,270,271};
+static const int preset_mem[] = {222,226,215,214,233,279,270,271};
+static const int preset_security[] = {117,277,280,146,144,147,149,105,273,106,97,268,91,167,134};
+
 static void apply_preset(const char *name)
 {
     int i;
+    const int *nrs = 0;
+    int cnt = 0;
     /* Clear bitmap */
     for (i = 0; i < BITMAP_LONGS; i++)
         g_nr_bitmap[i] = 0;
 
     if (!strcmp(name, "re_basic")) {
-        int nrs[] = {56,48,78,221,222,226,198,203,117,167,29,134,279,280};
-        for (i = 0; i < (int)(sizeof(nrs)/sizeof(nrs[0])); i++)
-            bitmap_set(g_nr_bitmap, nrs[i]);
+        nrs = preset_re_basic;
+        cnt = (int)(sizeof(preset_re_basic) / sizeof(preset_re_basic[0]));
     }
     else if (!strcmp(name, "re_full")) {
-        int nrs[] = {56,48,35,78,79,63,64,221,281,220,93,94,222,226,215,198,200,203,206,207,117,167,29,25,129,131,134,135,277,280,279,146,144,147,105,273,97,268,261,291};
-        for (i = 0; i < (int)(sizeof(nrs)/sizeof(nrs[0])); i++)
-            bitmap_set(g_nr_bitmap, nrs[i]);
+        nrs = preset_re_full;
+        cnt = (int)(sizeof(preset_re_full) / sizeof(preset_re_full[0]));
     }
     else if (!strcmp(name, "file")) {
-        int nrs[] = {56,57,48,35,78,79,80,61,63,64,62,34,38,276,53,54,291,43,27,5,8};
-        for (i = 0; i < (int)(sizeof(nrs)/sizeof(nrs[0])); i++)
-            bitmap_set(g_nr_bitmap, nrs[i]);
+        nrs = preset_file;
+        cnt = (int)(sizeof(preset_file) / sizeof(preset_file[0]));
     }
     else if (!strcmp(name, "net")) {
-        int nrs[] = {198,200,201,202,203,206,207,208,209,210,211,212,242};
-        for (i = 0; i < (int)(sizeof(nrs)/sizeof(nrs[0])); i++)
-            bitmap_set(g_nr_bitmap, nrs[i]);
+        nrs = preset_net;
+        cnt = (int)(sizeof(preset_net) / sizeof(preset_net[0]));
     }
     else if (!strcmp(name, "proc")) {
-        int nrs[] = {221,281,220,93,94,95,260,117,129,130,131,270,271};
-        for (i = 0; i < (int)(sizeof(nrs)/sizeof(nrs[0])); i++)
-            bitmap_set(g_nr_bitmap, nrs[i]);
+        nrs = preset_proc;
+        cnt = (int)(sizeof(preset_proc) / sizeof(preset_proc[0]));
     }
     else if (!strcmp(name, "mem")) {
-        int nrs[] = {222,226,215,214,233,279,270,271};
-        for (i = 0; i < (int)(sizeof(nrs)/sizeof(nrs[0])); i++)
-            bitmap_set(g_nr_bitmap, nrs[i]);
+        nrs = preset_mem;
+        cnt = (int)(sizeof(preset_mem) / sizeof(preset_mem[0]));
     }
     else if (!strcmp(name, "security")) {
-        int nrs[] = {117,277,280,146,144,147,149,105,273,106,97,268,91,167,134};
-        for (i = 0; i < (int)(sizeof(nrs)/sizeof(nrs[0])); i++)
-            bitmap_set(g_nr_bitmap, nrs[i]);
+        nrs = preset_security;
+        cnt = (int)(sizeof(preset_security) / sizeof(preset_security[0]));
     }
     else if (!strcmp(name, "all")) {
         /* Enable all hooked NRs */
@@ -1617,6 +1647,11 @@ static void apply_preset(const char *name)
         for (i = 0; i < (int)TIER2_COUNT; i++)
             if (tier2_hooks[i].active)
                 bitmap_set(g_nr_bitmap, tier2_hooks[i].nr);
+    }
+    if (nrs && cnt > 0) {
+        for (i = 0; i < cnt; i++) {
+            bitmap_set(g_nr_bitmap, nrs[i]);
+        }
     }
 }
 
@@ -1703,7 +1738,7 @@ static long svc_ctl0(const char *args, char *__user out_msg, int outlen)
             "\"logging_nrs\":[",
             g_enabled ? "true" : "false",
             g_target_uid, g_hooks_installed,
-            nr_logging, g_ev_count,
+            nr_logging, g_total,
             g_ev_count < MAX_EVENTS ? g_ev_count : MAX_EVENTS,
             g_tier2_loaded ? "true" : "false");
 
@@ -1839,7 +1874,7 @@ static long svc_ctl0(const char *args, char *__user out_msg, int outlen)
         int count = avail < max ? avail : max;
         int start;
 
-        n = snprintf(buf, blen, "{\"ok\":true,\"count\":%d,\"total\":%d,\"events\":[", count, g_ev_count);
+        n = snprintf(buf, blen, "{\"ok\":true,\"count\":%d,\"total\":%u,\"events\":[", count, g_total);
 
         if (count > 0) {
             start = (g_ev_head - avail + MAX_EVENTS) % MAX_EVENTS;
@@ -1854,11 +1889,13 @@ static long svc_ctl0(const char *args, char *__user out_msg, int outlen)
 
                 if (i > 0) n += snprintf(buf + n, blen - n, ",");
                 n += snprintf(buf + n, blen - n,
-                    "{\"nr\":%d,\"name\":\"%s\",\"pid\":%d,\"uid\":%d,"
-                    "\"comm\":\"%s\",\"a0\":%lu,\"a1\":%lu,\"a2\":%lu,"
+                    "{\"seq\":%u,\"nr\":%d,\"name\":\"%s\",\"pid\":%d,\"uid\":%d,"
+                    "\"comm\":\"%s\",\"pc\":%lu,\"caller\":%lu,"
+                    "\"a0\":%lu,\"a1\":%lu,\"a2\":%lu,"
                     "\"a3\":%lu,\"a4\":%lu,\"a5\":%lu,\"desc\":\"%s\"}",
-                    ev->nr, get_syscall_name(ev->nr), ev->pid, ev->uid,
-                    ev->comm, ev->a0, ev->a1, ev->a2,
+                    ev->seq, ev->nr, get_syscall_name(ev->nr), ev->pid, ev->uid,
+                    ev->comm, ev->pc, ev->caller,
+                    ev->a0, ev->a1, ev->a2,
                     ev->a3, ev->a4, ev->a5, esc);
             }
         }
@@ -1913,6 +1950,8 @@ static long svc_init(const char *args, const char *event, void *__user reserved)
     g_target_uid = -1;
     g_ev_head = 0;
     g_ev_count = 0;
+    g_seq = 0;
+    g_total = 0;
     g_hooks_installed = 0;
     g_tier2_loaded = 0;
 

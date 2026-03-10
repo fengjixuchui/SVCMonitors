@@ -39,17 +39,25 @@ class MainViewModel : ViewModel() {
     private val eventBuffer = mutableListOf<StatusParser.SvcEvent>()
     private val maxEvents = 2000
 
-    // ===== Toast =====
-    private val _toast = MutableLiveData<String>()
-    val toast: LiveData<String> = _toast
+    private val _eventCount = MutableLiveData(0)
+    val eventCount: LiveData<Int> = _eventCount
+
+    // ===== Message =====
+    private val _toast = MutableLiveData<String?>()
+    val toast: LiveData<String?> = _toast
 
     // ===== Monitoring state (local) =====
     private val _monitoring = MutableLiveData(false)
     val monitoring: LiveData<Boolean> = _monitoring
 
+    var selectedApp: AppInfo? = null
+    var selectedPreset: String = "re_basic"
+
     // ===== Polling =====
     private var pollingJob: Job? = null
     private var pollingPaused = false
+
+    private val nrSet = mutableSetOf<Int>()
 
     fun startPolling() {
         if (pollingJob?.isActive == true) return
@@ -77,6 +85,10 @@ class MainViewModel : ViewModel() {
                 _status.postValue(s)
                 if (s.ok) {
                     _monitoring.postValue(s.enabled)
+                    synchronized(nrSet) {
+                        nrSet.clear()
+                        nrSet.addAll(s.nrList)
+                    }
                 }
             }
 
@@ -92,6 +104,7 @@ class MainViewModel : ViewModel() {
                                 eventBuffer.removeAt(0)
                             }
                             _events.postValue(ArrayList(eventBuffer))
+                            _eventCount.postValue(eventBuffer.size)
                         }
                     }
                 }
@@ -287,6 +300,7 @@ class MainViewModel : ViewModel() {
                 synchronized(eventBuffer) {
                     eventBuffer.clear()
                     _events.postValue(emptyList())
+                    _eventCount.postValue(0)
                 }
                 _toast.postValue("事件已清空")
             } finally {
@@ -298,6 +312,46 @@ class MainViewModel : ViewModel() {
 
     fun refreshNow() {
         viewModelScope.launch { pollOnce() }
+    }
+
+    fun toastConsumed() {
+        _toast.postValue(null)
+    }
+
+    fun addNr(nr: Int) {
+        viewModelScope.launch {
+            pollingPaused = true
+            try {
+                val r = KpmBridge.enableNr(nr)
+                if (r.success) {
+                    synchronized(nrSet) { nrSet.add(nr) }
+                    _toast.postValue("已添加 NR $nr")
+                } else {
+                    _toast.postValue("添加失败: ${r.error}")
+                }
+            } finally {
+                pollingPaused = false
+                pollOnce()
+            }
+        }
+    }
+
+    fun removeNr(nr: Int) {
+        viewModelScope.launch {
+            pollingPaused = true
+            try {
+                val r = KpmBridge.disableNr(nr)
+                if (r.success) {
+                    synchronized(nrSet) { nrSet.remove(nr) }
+                    _toast.postValue("已移除 NR $nr")
+                } else {
+                    _toast.postValue("移除失败: ${r.error}")
+                }
+            } finally {
+                pollingPaused = false
+                pollOnce()
+            }
+        }
     }
 
     override fun onCleared() {
