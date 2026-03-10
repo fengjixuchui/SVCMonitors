@@ -74,6 +74,8 @@ class MainActivity : AppCompatActivity() {
     private var lastEventsAll: List<StatusParser.SvcEvent> = emptyList()
     private var eventSearchQuery: String = ""
     private var historyLastSeq: Long = 0L
+    private val eventSearchExtra = HashMap<Long, String>()
+    private var resolvingSearch = false
 
     /* ── app list data ────────────────────────────────────────── */
     private var appList: List<AppInfo> = emptyList()
@@ -499,6 +501,7 @@ class MainActivity : AppCompatActivity() {
                 override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
                 override fun afterTextChanged(s: Editable?) {
                     eventSearchQuery = s?.toString()?.trim().orEmpty()
+                    kickResolveForSearch()
                     updateEventList(filterEvents(lastEventsAll))
                 }
             })
@@ -748,6 +751,7 @@ class MainActivity : AppCompatActivity() {
         vm.events.observe(this) { events ->
             lastEventsAll = events
             persistNewEvents(events)
+            kickResolveForSearch()
             updateEventList(filterEvents(events))
         }
 
@@ -846,17 +850,84 @@ class MainActivity : AppCompatActivity() {
         val lq = q.lowercase()
         val out = ArrayList<StatusParser.SvcEvent>()
         for (e in events) {
+            val extra = eventSearchExtra[e.seq]?.lowercase().orEmpty()
             val hit =
                 e.name.lowercase().contains(lq) ||
                     e.comm.lowercase().contains(lq) ||
                     e.desc.lowercase().contains(lq) ||
+                    extra.contains(lq) ||
                     e.nr.toString().contains(q) ||
                     e.pid.toString().contains(q) ||
                     e.uid.toString().contains(q) ||
-                    e.seq.toString().contains(q)
+                    e.seq.toString().contains(q) ||
+                    e.pc.toString().contains(q) ||
+                    e.caller.toString().contains(q) ||
+                    (if (e.cloneFn != 0L) e.cloneFn.toString().contains(q) else false)
             if (hit) out.add(e)
         }
         return out
+    }
+
+    private fun kickResolveForSearch() {
+        if (resolvingSearch) return
+        val q = eventSearchQuery.trim()
+        if (q.isEmpty()) return
+        val snapshot = lastEventsAll.takeLast(600)
+        if (snapshot.isEmpty()) return
+        if (snapshot.all { eventSearchExtra.containsKey(it.seq) }) return
+
+        resolvingSearch = true
+        lifecycleScope.launch {
+            try {
+                val batch = snapshot.filter { !eventSearchExtra.containsKey(it.seq) }.take(80)
+                for (e in batch) {
+                    val pcResolved = formatAddrSoOffset(e.pid, e.pc)
+                    val callerResolved = formatAddrSoOffset(e.pid, e.caller)
+                    val cloneResolved = if (e.cloneFn != 0L) formatAddrSoOffset(e.pid, e.cloneFn) else ""
+                    val fdResolved = if (nrUsesFd(e.nr)) {
+                        val r = KpmBridge.readProcFdLink(e.pid, e.a0)
+                        if (r.isNotBlank()) r else ""
+                    } else {
+                        ""
+                    }
+
+                    val blob = buildString {
+                        appendLine("#${e.seq}  ${e.name}(${e.nr})")
+                        appendLine("分类: ${StatusParser.syscallCategory(e.nr)}")
+                        appendLine("PID: ${e.pid}  UID: ${e.uid}")
+                        appendLine("进程名: ${e.comm}")
+                        appendLine()
+                        appendLine("pc: $pcResolved")
+                        appendLine("caller: $callerResolved")
+                        if (e.cloneFn != 0L) appendLine("clone_fn: $cloneResolved")
+                        if (fdResolved.isNotEmpty()) appendLine("fd(${e.a0}): $fdResolved")
+                        appendLine()
+                        appendLine("a0: 0x${java.lang.Long.toHexString(e.a0)} (${e.a0})")
+                        appendLine("a1: 0x${java.lang.Long.toHexString(e.a1)} (${e.a1})")
+                        appendLine("a2: 0x${java.lang.Long.toHexString(e.a2)} (${e.a2})")
+                        appendLine("a3: 0x${java.lang.Long.toHexString(e.a3)} (${e.a3})")
+                        appendLine("a4: 0x${java.lang.Long.toHexString(e.a4)} (${e.a4})")
+                        appendLine("a5: 0x${java.lang.Long.toHexString(e.a5)} (${e.a5})")
+                        appendLine()
+                        appendLine(e.desc)
+
+                        val addrs = extractHexAddrs(e.desc).take(8)
+                        if (addrs.isNotEmpty()) {
+                            appendLine()
+                            addrs.forEach { a ->
+                                val abs = "0x${java.lang.Long.toHexString(a)}"
+                                val so = resolveAddress(e.pid, a)
+                                appendLine(if (so.isNotEmpty()) "$abs -> $so" else "$abs -> unmapped")
+                            }
+                        }
+                    }
+                    eventSearchExtra[e.seq] = blob
+                }
+            } finally {
+                resolvingSearch = false
+                updateEventList(filterEvents(lastEventsAll))
+            }
+        }
     }
 
     private fun historyFile(): File {
