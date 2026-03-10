@@ -37,7 +37,7 @@ class MainViewModel : ViewModel() {
     private val _events = MutableLiveData<List<StatusParser.SvcEvent>>(emptyList())
     val events: LiveData<List<StatusParser.SvcEvent>> = _events
     private val eventBuffer = mutableListOf<StatusParser.SvcEvent>()
-    private val maxEvents = 2000
+    private val maxEvents = 3000
     var doFilpOpenEnabled: Boolean = true
 
     private val _eventCount = MutableLiveData(0)

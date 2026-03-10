@@ -42,6 +42,9 @@ object StatusParser {
         val comm: String,
         val pc: Long = 0,
         val caller: Long = 0,
+        val fp: Long = 0,
+        val sp: Long = 0,
+        val bt: List<Long> = emptyList(),
         val cloneFn: Long = 0,
         val a0: Long, val a1: Long, val a2: Long,
         val a3: Long, val a4: Long, val a5: Long,
@@ -123,6 +126,13 @@ object StatusParser {
             if (arr != null) {
                 for (i in 0 until arr.length()) {
                     val e = arr.getJSONObject(i)
+                    val bt = ArrayList<Long>(3)
+                    val btArr = e.optJSONArray("bt")
+                    if (btArr != null) {
+                        for (k in 0 until btArr.length()) {
+                            bt.add(btArr.optLong(k, 0))
+                        }
+                    }
                     events.add(SvcEvent(
                         seq = e.optLong("seq", 0),
                         nr = e.optInt("nr"),
@@ -132,6 +142,9 @@ object StatusParser {
                         comm = e.optString("comm", ""),
                         pc = e.optLong("pc", 0),
                         caller = e.optLong("caller", 0),
+                        fp = e.optLong("fp", 0),
+                        sp = e.optLong("sp", 0),
+                        bt = bt,
                         cloneFn = e.optLong("clone_fn", 0),
                         a0 = e.optLong("a0"), a1 = e.optLong("a1"),
                         a2 = e.optLong("a2"), a3 = e.optLong("a3"),
@@ -161,6 +174,13 @@ object StatusParser {
             if (!line.startsWith("{")) continue
             try {
                 val e = JSONObject(line)
+                val bt = ArrayList<Long>(3)
+                val btArr = e.optJSONArray("bt")
+                if (btArr != null) {
+                    for (k in 0 until btArr.length()) {
+                        bt.add(btArr.optLong(k, 0))
+                    }
+                }
                 out.add(SvcEvent(
                     seq = e.optLong("seq", 0),
                     nr = e.optInt("nr"),
@@ -170,6 +190,9 @@ object StatusParser {
                     comm = e.optString("comm", ""),
                     pc = e.optLong("pc", 0),
                     caller = e.optLong("caller", 0),
+                    fp = e.optLong("fp", 0),
+                    sp = e.optLong("sp", 0),
+                    bt = bt,
                     cloneFn = e.optLong("clone_fn", 0),
                     a0 = e.optLong("a0"), a1 = e.optLong("a1"),
                     a2 = e.optLong("a2"), a3 = e.optLong("a3"),

@@ -7,7 +7,9 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.io.BufferedReader
+import java.io.BufferedWriter
 import java.io.InputStreamReader
+import java.io.OutputStreamWriter
 
 /**
      * KpmBridge v8.1.0 — ctl0 output first.
@@ -42,18 +44,103 @@ object KpmBridge {
      * Execute a shell command via su and return stdout+stderr.
      */
     private fun shellExec(cmd: String): Pair<Int, String> {
+        val r = try {
+            PersistentSuShell.exec(cmd)
+        } catch (e: Exception) {
+            Log.e(TAG, "shellExec persistent error", e)
+            Pair(-1, e.message ?: "exec error")
+        }
+        if (r.first >= 0) return r
+
         return try {
-            Log.d(TAG, "shellExec: $cmd")
+            Log.d(TAG, "shellExec(fallback): $cmd")
             val process = Runtime.getRuntime().exec(arrayOf("su", "-c", cmd))
             val stdout = process.inputStream.bufferedReader().readText().trim()
             val stderr = process.errorStream.bufferedReader().readText().trim()
             val exitCode = process.waitFor()
             val combined = if (stdout.isNotEmpty()) stdout else stderr
-            Log.d(TAG, "shellExec exit=$exitCode out=${combined.take(200)}")
+            Log.d(TAG, "shellExec(fallback) exit=$exitCode out=${combined.take(200)}")
             Pair(exitCode, combined)
         } catch (e: Exception) {
-            Log.e(TAG, "shellExec error", e)
+            Log.e(TAG, "shellExec fallback error", e)
             Pair(-1, e.message ?: "exec error")
+        }
+    }
+
+    private object PersistentSuShell {
+        private var proc: Process? = null
+        private var reader: BufferedReader? = null
+        private var writer: BufferedWriter? = null
+
+        private fun ensure(): Boolean {
+            val p = proc
+            if (p != null && p.isAlive && reader != null && writer != null) return true
+            try {
+                val np = ProcessBuilder("su").redirectErrorStream(true).start()
+                proc = np
+                reader = BufferedReader(InputStreamReader(np.inputStream))
+                writer = BufferedWriter(OutputStreamWriter(np.outputStream))
+                return true
+            } catch (e: Exception) {
+                proc = null
+                reader = null
+                writer = null
+                return false
+            }
+        }
+
+        fun exec(cmd: String, timeoutMs: Long = 8_000L): Pair<Int, String> {
+            if (!ensure()) return Pair(-1, "su shell start failed")
+
+            val nano = System.nanoTime()
+            val endMarker = "__END_${nano}__"
+            val rcMarker = "__RC_${nano}__"
+
+            val w = writer ?: return Pair(-1, "su shell writer missing")
+            val r = reader ?: return Pair(-1, "su shell reader missing")
+
+            try {
+                Log.d(TAG, "shellExec(persistent): $cmd")
+                w.write("$cmd; echo $rcMarker$?; echo $endMarker\n")
+                w.flush()
+
+                val outLines = ArrayList<String>(32)
+                var rc: Int? = null
+                val start = System.currentTimeMillis()
+                while (System.currentTimeMillis() - start <= timeoutMs) {
+                    if (r.ready()) {
+                        val line = r.readLine() ?: break
+                        if (line == endMarker) {
+                            val output = outLines.joinToString("\n").trim()
+                            val code = rc ?: 0
+                            Log.d(TAG, "shellExec(persistent) exit=$code out=${output.take(200)}")
+                            return Pair(code, output)
+                        }
+                        if (line.startsWith(rcMarker)) {
+                            rc = line.substring(rcMarker.length).trim().toIntOrNull() ?: 0
+                        } else {
+                            outLines.add(line)
+                        }
+                    } else {
+                        Thread.sleep(10)
+                    }
+                }
+
+                reset()
+                return Pair(-1, "su shell timeout")
+            } catch (e: Exception) {
+                reset()
+                return Pair(-1, e.message ?: "su shell error")
+            }
+        }
+
+        private fun reset() {
+            try { writer?.close() } catch (_: Exception) {}
+            try { reader?.close() } catch (_: Exception) {}
+            try { proc?.destroy() } catch (_: Exception) {}
+            proc = null
+            reader = null
+            writer = null
         }
     }
 
@@ -218,6 +305,24 @@ object KpmBridge {
         withContext(Dispatchers.IO) {
             val (_, out) = shellExec("readlink /proc/$pid/fd/$fd 2>/dev/null")
             out
+        }
+    }
+
+    suspend fun readProcMemQwords(pid: Int, addr: Long, qwords: Int = 2): List<Long> = mutex.withLock {
+        withContext(Dispatchers.IO) {
+            if (pid <= 0 || addr <= 0L || qwords <= 0) return@withContext emptyList()
+            val count = qwords * 8
+            val cmd = "dd if=/proc/$pid/mem bs=1 skip=$addr count=$count 2>/dev/null | od -An -t x8 2>/dev/null"
+            val (_, out) = shellExec(cmd)
+            if (out.isBlank()) return@withContext emptyList()
+            val toks = out.trim().split(Regex("\\s+")).filter { it.isNotBlank() }
+            val res = ArrayList<Long>(qwords)
+            for (t in toks) {
+                val v = t.toLongOrNull(16) ?: continue
+                res.add(v)
+                if (res.size >= qwords) break
+            }
+            res
         }
     }
 }

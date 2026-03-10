@@ -1,12 +1,16 @@
 package com.svcmonitor.app
 
 import android.content.Intent
+import android.app.Dialog
 import android.graphics.Color
 import android.graphics.Typeface
 import android.os.Bundle
 import android.text.Editable
+import android.text.SpannableString
+import android.text.Spanned
 import android.text.TextUtils
 import android.text.TextWatcher
+import android.text.style.ForegroundColorSpan
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
@@ -75,7 +79,25 @@ class MainActivity : AppCompatActivity() {
     private var eventSearchQuery: String = ""
     private var historyLastSeq: Long = 0L
     private val eventSearchExtra = HashMap<Long, String>()
+    private val eventCallChain = HashMap<Long, String>()
     private var resolvingSearch = false
+    private var resolvingChain = false
+
+    private data class SensitiveRule(val needle: String, val color: Int)
+    private val sensitiveRules by lazy {
+        listOf(
+            SensitiveRule("ptrace", cRed),
+            SensitiveRule("/proc/self/maps", cRed),
+            SensitiveRule("/proc/self/mem", cRed),
+            SensitiveRule("process_vm_readv", cRed),
+            SensitiveRule("process_vm_writev", cRed),
+            SensitiveRule("frida", 0xFFFF8800.toInt()),
+            SensitiveRule("xposed", 0xFFFF8800.toInt()),
+            SensitiveRule("magisk", 0xFFFF8800.toInt()),
+            SensitiveRule("su", 0xFFCCAA00.toInt()),
+            SensitiveRule("tcp", 0xFFCCAA00.toInt())
+        )
+    }
 
     /* ── app list data ────────────────────────────────────────── */
     private var appList: List<AppInfo> = emptyList()
@@ -364,6 +386,32 @@ class MainActivity : AppCompatActivity() {
                     ).apply { topMargin = dp(4) }
                 })
             }
+        })
+
+        col.addView(makeCard {
+            addView(makeLabel("规则集 (Rule Sets)"))
+
+            fun addRuleBtn(title: String, nrs: IntArray) {
+                addView(Button(this@MainActivity).apply {
+                    text = title
+                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+                    isAllCaps = false
+                    setOnClickListener {
+                        vm.setNrs(nrs.toList())
+                        tvMsg.text = "提示: 已应用规则集 $title"
+                    }
+                    layoutParams = LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.WRAP_CONTENT
+                    ).apply { topMargin = dp(4) }
+                })
+            }
+
+            addRuleBtn("抓取文件读写", RuleSets.FILE_IO)
+            addRuleBtn("抓取网络请求", RuleSets.NETWORK)
+            addRuleBtn("反调试检测", RuleSets.ANTI_DEBUG)
+            addRuleBtn("进程生命周期", RuleSets.PROCESS)
+            addRuleBtn("内存操作/注入", RuleSets.MEMORY)
         })
 
         // Manual NR add/remove
@@ -751,6 +799,7 @@ class MainActivity : AppCompatActivity() {
         vm.events.observe(this) { events ->
             lastEventsAll = events
             persistNewEvents(events)
+            kickResolveCallChain(events)
             kickResolveForSearch()
             updateEventList(filterEvents(events))
         }
@@ -820,16 +869,30 @@ class MainActivity : AppCompatActivity() {
                 text = "pid=${evt.pid} uid=${evt.uid} comm=${evt.comm}"
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
                 setTextColor(cSecondary)
+                setOnClickListener { showPidSidebar(evt.pid) }
             })
 
             // Row 3: description (the deep-parsed args)
             if (evt.desc.isNotEmpty()) {
                 card.addView(TextView(this).apply {
-                    text = evt.desc
+                    text = highlightSensitive(evt.desc)
                     setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
                     setTextColor(cText)
                     typeface = Typeface.MONOSPACE
                     maxLines = 6
+                    ellipsize = TextUtils.TruncateAt.END
+                    setPadding(0, dp(4), 0, 0)
+                })
+            }
+
+            val chain = eventCallChain[evt.seq].orEmpty()
+            if (chain.isNotBlank()) {
+                card.addView(TextView(this).apply {
+                    text = highlightSensitive(chain)
+                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
+                    setTextColor(cAccent)
+                    typeface = Typeface.MONOSPACE
+                    maxLines = 8
                     ellipsize = TextUtils.TruncateAt.END
                     setPadding(0, dp(4), 0, 0)
                 })
@@ -868,6 +931,149 @@ class MainActivity : AppCompatActivity() {
         return out
     }
 
+    private fun highlightSensitive(text: String): CharSequence {
+        if (text.isEmpty()) return text
+        val out = SpannableString(text)
+        val lower = text.lowercase()
+        for (r in sensitiveRules) {
+            val needle = r.needle.lowercase()
+            var idx = lower.indexOf(needle)
+            while (idx >= 0) {
+                out.setSpan(
+                    ForegroundColorSpan(r.color),
+                    idx,
+                    (idx + needle.length).coerceAtMost(text.length),
+                    Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+                )
+                idx = lower.indexOf(needle, idx + needle.length)
+            }
+        }
+        return out
+    }
+
+    private fun showPidSidebar(pid: Int) {
+        if (pid <= 0) return
+        val events = lastEventsAll.filter { it.pid == pid }
+        if (events.isEmpty()) {
+            tvMsg.text = "提示: PID=$pid 暂无事件"
+            return
+        }
+
+        val dialog = Dialog(this, android.R.style.Theme_DeviceDefault_Light_NoActionBar)
+        val w = dialog.window
+        if (w != null) {
+            w.setGravity(Gravity.END)
+            w.setLayout((resources.displayMetrics.widthPixels * 0.88f).toInt(), ViewGroup.LayoutParams.MATCH_PARENT)
+        }
+
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(Color.WHITE)
+            setPadding(dp(12), dp(16), dp(12), dp(16))
+        }
+
+        root.addView(TextView(this).apply {
+            text = "进程分析 (PID=$pid)"
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
+            setTextColor(cPrimary)
+            typeface = Typeface.DEFAULT_BOLD
+        })
+
+        val summaryTv = TextView(this).apply {
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+            setTextColor(cText)
+            typeface = Typeface.MONOSPACE
+            setPadding(0, dp(10), 0, 0)
+        }
+        root.addView(ScrollView(this).apply {
+            addView(summaryTv)
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f).apply {
+                topMargin = dp(8)
+            }
+        })
+
+        root.addView(Button(this).apply {
+            text = "关闭"
+            isAllCaps = false
+            setOnClickListener { dialog.dismiss() }
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                topMargin = dp(10)
+            }
+        })
+
+        dialog.setContentView(root)
+
+        lifecycleScope.launch {
+            val text = withContext(Dispatchers.Default) {
+                val uidSet = LinkedHashSet<Int>()
+                val commSet = LinkedHashSet<String>()
+                val cntByName = HashMap<String, Int>()
+                var firstSeq = Long.MAX_VALUE
+                var lastSeq = 0L
+                for (e in events) {
+                    uidSet.add(e.uid)
+                    commSet.add(e.comm)
+                    cntByName[e.name] = (cntByName[e.name] ?: 0) + 1
+                    if (e.seq in 1 until firstSeq) firstSeq = e.seq
+                    if (e.seq > lastSeq) lastSeq = e.seq
+                }
+                val top = cntByName.entries.sortedByDescending { it.value }.take(12)
+                val ordered = events.sortedBy { it.seq }
+
+                buildString {
+                    appendLine("事件数: ${events.size}")
+                    appendLine("UID: ${uidSet.joinToString(", ")}")
+                    appendLine("进程名: ${commSet.joinToString(", ")}")
+                    appendLine("Seq范围: $firstSeq ~ $lastSeq")
+                    appendLine()
+                    appendLine("Top 系统调用:")
+                    top.forEach { appendLine("  ${it.key}: ${it.value}") }
+                    appendLine()
+                    appendLine("调用流程(按Seq):")
+                    for (e in ordered) {
+                        val d = e.desc.replace('\n', ' ').replace('\r', ' ').trim()
+                        appendLine("#${e.seq}  ${e.name}(${e.nr})  $d")
+                    }
+                }
+            }
+            summaryTv.text = highlightSensitive(text)
+        }
+
+        dialog.show()
+    }
+
+    private fun matchesSensitive(text: String): Boolean {
+        if (text.isEmpty()) return false
+        val lower = text.lowercase()
+        for (r in sensitiveRules) {
+            if (lower.contains(r.needle.lowercase())) return true
+        }
+        return false
+    }
+
+    private fun kickResolveCallChain(events: List<StatusParser.SvcEvent>) {
+        if (resolvingChain) return
+        if (events.isEmpty()) return
+        val batch = events.asReversed()
+            .filter { it.fp > 0L && !eventCallChain.containsKey(it.seq) }
+            .take(16)
+        if (batch.isEmpty()) return
+
+        resolvingChain = true
+        lifecycleScope.launch {
+            try {
+                for (e in batch) {
+                    val callerResolved = formatAddrSoOffset(e.pid, e.caller)
+                    val chain = buildFpCallChain(e, callerResolved)
+                    if (chain.isNotBlank()) eventCallChain[e.seq] = chain
+                }
+            } finally {
+                resolvingChain = false
+                updateEventList(filterEvents(lastEventsAll))
+            }
+        }
+    }
+
     private fun kickResolveForSearch() {
         if (resolvingSearch) return
         val q = eventSearchQuery.trim()
@@ -890,6 +1096,21 @@ class MainActivity : AppCompatActivity() {
                     } else {
                         ""
                     }
+                    val chainResolved = buildFpCallChain(e, callerResolved)
+                    if (chainResolved.isNotBlank()) eventCallChain[e.seq] = chainResolved
+                    val kernelBtResolved = if (e.bt.isNotEmpty()) {
+                        buildString {
+                            var idx = 0
+                            for (a in e.bt) {
+                                if (a == 0L) continue
+                                appendLine("#$idx ${formatAddrSoOffset(e.pid, a)}")
+                                idx++
+                                if (idx >= 7) break
+                            }
+                        }.trim()
+                    } else {
+                        ""
+                    }
 
                     val blob = buildString {
                         appendLine("#${e.seq}  ${e.name}(${e.nr})")
@@ -899,8 +1120,18 @@ class MainActivity : AppCompatActivity() {
                         appendLine()
                         appendLine("pc: $pcResolved")
                         appendLine("caller: $callerResolved")
+                        if (kernelBtResolved.isNotBlank()) {
+                            appendLine()
+                            appendLine("bt:")
+                            appendLine(kernelBtResolved)
+                        }
                         if (e.cloneFn != 0L) appendLine("clone_fn: $cloneResolved")
                         if (fdResolved.isNotEmpty()) appendLine("fd(${e.a0}): $fdResolved")
+                        if (chainResolved.isNotBlank()) {
+                            appendLine()
+                            appendLine("调用链:")
+                            appendLine(chainResolved)
+                        }
                         appendLine()
                         appendLine("a0: 0x${java.lang.Long.toHexString(e.a0)} (${e.a0})")
                         appendLine("a1: 0x${java.lang.Long.toHexString(e.a1)} (${e.a1})")
@@ -928,6 +1159,42 @@ class MainActivity : AppCompatActivity() {
                 updateEventList(filterEvents(lastEventsAll))
             }
         }
+    }
+
+    private suspend fun buildFpCallChain(evt: StatusParser.SvcEvent, callerResolved: String): String {
+        if (evt.pid <= 0) return ""
+        if (evt.fp <= 0L) return ""
+        if (callerResolved.contains("(unmapped)")) return ""
+        if (callerResolved.startsWith("[anon:")) return ""
+
+        val lines = ArrayList<String>(8)
+        lines.add("#0 $callerResolved")
+
+        fun stripPtr(v: Long): Long = v and 0x00FFFFFFFFFFFFFFL
+
+        var fp = stripPtr(evt.fp)
+        val seen = HashSet<Long>()
+        var depth = 0
+        while (depth < 7) {
+            if (!seen.add(fp)) break
+            val words = KpmBridge.readProcMemQwords(evt.pid, fp, 2)
+            if (words.size < 2) break
+            val nextFp = stripPtr(words[0])
+            val lr = stripPtr(words[1])
+            if (nextFp <= 0L || lr == 0L) break
+            if (nextFp <= fp) break
+            if (nextFp - fp > 0x40000L) break
+
+            val lrResolved = formatAddrSoOffset(evt.pid, lr)
+            if (lrResolved.contains("(unmapped)")) break
+            if (lrResolved.startsWith("[anon:")) break
+            lines.add("#${depth + 1} $lrResolved")
+            fp = nextFp
+            depth++
+        }
+
+        if (lines.size <= 1) return ""
+        return lines.joinToString("\n")
     }
 
     private fun historyFile(): File {
@@ -1000,6 +1267,25 @@ class MainActivity : AppCompatActivity() {
             val pcResolved = formatAddrSoOffset(evt.pid, evt.pc)
             val callerResolved = formatAddrSoOffset(evt.pid, evt.caller)
             val cloneResolved = if (evt.cloneFn != 0L) formatAddrSoOffset(evt.pid, evt.cloneFn) else ""
+            val chainResolved = eventCallChain[evt.seq].orEmpty().ifBlank {
+                val r = buildFpCallChain(evt, callerResolved)
+                if (r.isNotBlank()) eventCallChain[evt.seq] = r
+                r
+            }
+            val kernelBtResolved = if (evt.bt.isNotEmpty()) {
+                buildString {
+                    var idx = 0
+                    for (a in evt.bt) {
+                        if (a == 0L) continue
+                        val resolved = formatAddrSoOffset(evt.pid, a)
+                        appendLine("#$idx $resolved")
+                        idx++
+                        if (idx >= 7) break
+                    }
+                }.trim()
+            } else {
+                ""
+            }
 
             val fdResolved = if (nrUsesFd(evt.nr)) {
                 val r = KpmBridge.readProcFdLink(evt.pid, evt.a0)
@@ -1018,11 +1304,23 @@ class MainActivity : AppCompatActivity() {
                 appendLine()
                 appendLine("pc: $pcResolved")
                 appendLine("caller: $callerResolved")
+                if (evt.fp != 0L) appendLine("fp: 0x${java.lang.Long.toHexString(evt.fp)}")
+                if (evt.sp != 0L) appendLine("sp: 0x${java.lang.Long.toHexString(evt.sp)}")
                 if (evt.nr == 220 && evt.cloneFn != 0L) {
                     appendLine("clone_fn: $cloneResolved")
                 }
+                if (kernelBtResolved.isNotBlank()) {
+                    appendLine()
+                    appendLine("═══ 内核回溯(bt) ═══")
+                    appendLine(kernelBtResolved)
+                }
                 if (fdResolved.isNotEmpty()) {
                     appendLine("fd(${evt.a0}): $fdResolved")
+                }
+                if (chainResolved.isNotBlank()) {
+                    appendLine()
+                    appendLine("═══ 调用链(FP) ═══")
+                    appendLine(chainResolved)
                 }
                 appendLine()
                 appendLine("═══ 参数 ═══")
@@ -1052,6 +1350,7 @@ class MainActivity : AppCompatActivity() {
                 .setTitle("${evt.name}(${evt.nr})")
                 .setMessage(detail)
                 .setPositiveButton("确定", null)
+                .setNegativeButton("PID分析") { _, _ -> showPidSidebar(evt.pid) }
                 .setNeutralButton("复制") { _, _ ->
                     val clip = getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager
                     clip.setPrimaryClip(android.content.ClipData.newPlainText("svc_event", detail))
@@ -1343,7 +1642,13 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private data class MapRegion(val start: Long, val end: Long, val mapOffset: Long, val path: String)
+    private data class MapRegion(
+        val start: Long,
+        val end: Long,
+        val perms: String,
+        val mapOffset: Long,
+        val path: String
+    )
     private data class MapsSnapshot(val tsMs: Long, val regions: List<MapRegion>)
     private val mapsCache = HashMap<Int, MapsSnapshot>()
     private val mapsCacheTtlMs = 5000L
@@ -1353,7 +1658,14 @@ class MainActivity : AppCompatActivity() {
         val regions = getMapsRegions(pid) ?: return ""
         val region = findMapRegion(regions, addr) ?: return ""
         val fileOffset = (addr - region.start) + region.mapOffset
-        val name = if (region.path.isNotBlank()) region.path.substringAfterLast('/') else "[anon]"
+        if (region.path.isBlank() || region.path.startsWith("[")) {
+            val startHex = java.lang.Long.toHexString(region.start)
+            val endHex = java.lang.Long.toHexString(region.end)
+            val sizeKb = ((region.end - region.start) / 1024L).coerceAtLeast(0L)
+            val prot = region.perms.take(3)
+            return "[anon:$startHex-$endHex]+0x${java.lang.Long.toHexString(fileOffset)}(size=${sizeKb}KB,prot=$prot)"
+        }
+        val name = region.path.substringAfterLast('/')
         return "$name+0x${java.lang.Long.toHexString(fileOffset)}"
     }
 
@@ -1385,6 +1697,7 @@ class MainActivity : AppCompatActivity() {
             val parts = line.trim().split(Regex("\\s+"), limit = 6)
             if (parts.size < 3) continue
             val range = parts[0]
+            val perms = parts[1]
             val offStr = parts[2]
             val path = if (parts.size >= 6) parts[5] else ""
             val dash = range.indexOf('-')
@@ -1392,7 +1705,7 @@ class MainActivity : AppCompatActivity() {
             val start = range.substring(0, dash).toLongOrNull(16) ?: continue
             val end = range.substring(dash + 1).toLongOrNull(16) ?: continue
             val offset = offStr.toLongOrNull(16) ?: 0L
-            out.add(MapRegion(start = start, end = end, mapOffset = offset, path = path))
+            out.add(MapRegion(start = start, end = end, perms = perms, mapOffset = offset, path = path))
         }
         return out
     }
