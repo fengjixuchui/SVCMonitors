@@ -27,6 +27,9 @@ interface SvcEventDao {
     @Query("SELECT * FROM events WHERE pid = :tid ORDER BY seq DESC LIMIT :limit")
     suspend fun byTid(tid: Int, limit: Int): List<SvcEventEntity>
 
+    @Query("SELECT * FROM events WHERE seq > :seq ORDER BY seq ASC LIMIT :limit")
+    suspend fun afterSeq(seq: Long, limit: Int): List<SvcEventEntity>
+
     @Query(
         """
         SELECT events.* FROM events

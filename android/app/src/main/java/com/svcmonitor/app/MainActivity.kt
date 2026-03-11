@@ -1476,7 +1476,6 @@ class MainActivity : AppCompatActivity() {
                         } catch (_: Exception) {
                             null
                         }
-                        var dumped = false
                         if (r != null) {
                             try {
                                 while (pcServerEnabled && !sock.isClosed) {
@@ -1485,13 +1484,12 @@ class MainActivity : AppCompatActivity() {
                                         try {
                                             w.write("PONG\n")
                                             w.flush()
-                                            if (!dumped) {
-                                                dumped = true
-                                                sendPcServerBacklog(w)
-                                            }
                                         } catch (_: Exception) {
                                             break
                                         }
+                                    } else if (line.startsWith("HELLO")) {
+                                        val seq = line.removePrefix("HELLO").trim().toLongOrNull() ?: 0L
+                                        sendPcServerBacklog(w, seq)
                                     } else if (line.startsWith("CMD")) {
                                         val cmd = line.removePrefix("CMD").trim()
                                         runOnUiThread {
@@ -1542,12 +1540,20 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private suspend fun sendPcServerBacklog(w: java.io.BufferedWriter) {
+    private suspend fun sendPcServerBacklog(w: java.io.BufferedWriter, afterSeq: Long) {
         val dao = SvcEventDb.get(applicationContext).dao()
-        val list = try { dao.latest(pcServerBacklogLimit) } catch (_: Exception) { emptyList() }
+        val list = try {
+            if (afterSeq > 0L) {
+                dao.afterSeq(afterSeq, pcServerBacklogLimit)
+            } else {
+                dao.latest(pcServerBacklogLimit).asReversed()
+            }
+        } catch (_: Exception) {
+            emptyList()
+        }
         if (list.isEmpty()) return
         try {
-            for (e in list.asReversed()) {
+            for (e in list) {
                 w.write(entityToJsonLine(e))
             }
             w.flush()

@@ -9,6 +9,12 @@ if ! command -v adb >/dev/null 2>&1; then
   exit 1
 fi
 
+if ! python3 -c "import eventlet" >/dev/null 2>&1; then
+  echo "Missing python dependency: eventlet"
+  echo "Run: pip install -r \"$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/requirements.txt\""
+  exit 2
+fi
+
 adb forward "tcp:${APP_PORT}" "tcp:${APP_PORT}" >/dev/null
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

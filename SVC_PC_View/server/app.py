@@ -19,6 +19,14 @@ import socket
 import threading
 import argparse
 import subprocess
+import select
+import shutil
+try:
+    import eventlet
+    eventlet.monkey_patch()
+    _EVENTLET_OK = True
+except Exception:
+    _EVENTLET_OK = False
 from datetime import datetime
 from collections import defaultdict
 
@@ -31,6 +39,8 @@ from flask_socketio import SocketIO, emit
 DEFAULT_BRIDGE_HOST = "127.0.0.1"
 DEFAULT_BRIDGE_PORT = 9527
 DEFAULT_WEB_PORT = 5001
+LAST_SEQ_PATH = "/tmp/svcmon_last_seq.txt"
+SYMBOL_DIR = "/tmp/svcmon_symbols"
 
 # ─────────────────────────────────────────────────
 # App setup
@@ -39,7 +49,9 @@ app = Flask(__name__,
             template_folder=os.path.join(os.path.dirname(__file__), "..", "templates"),
             static_folder=os.path.join(os.path.dirname(__file__), "..", "static"))
 app.config["SECRET_KEY"] = "svc-monitor-secret"
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode="threading")
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode="eventlet" if _EVENTLET_OK else "threading")
+
+os.makedirs(SYMBOL_DIR, exist_ok=True)
 
 
 # ─────────────────────────────────────────────────
@@ -197,6 +209,7 @@ class EventStore:
                 candidates = range(len(self.events))
 
             results = []
+            tid_count = defaultdict(int)
             for idx in candidates:
                 ev = self.events[idx]
 
@@ -210,6 +223,8 @@ class EventStore:
                     if q not in searchable:
                         continue
 
+                t = ev.get("tid", ev.get("pid", 0))
+                tid_count[t] += 1
                 results.append(idx)
 
             total = len(results)
@@ -220,6 +235,10 @@ class EventStore:
                 "limit": limit,
                 "events": [self.events[i] for i in page],
                 "indices": page,
+                "tid_stats": [
+                    {"tid": t, "count": c}
+                    for t, c in sorted(tid_count.items(), key=lambda x: -x[1])[:64]
+                ],
             }
 
     def get_pid_summary(self):
@@ -369,20 +388,39 @@ class EventStore:
 store = EventStore()
 
 app_socket_lock = threading.Lock()
-app_socket_file = None
 app_socket_sock = None
+app_socket_last_seq = 0
+app_socket_last_seq_dirty = 0
+
+
+def load_last_seq():
+    try:
+        with open(LAST_SEQ_PATH, "r") as f:
+            return int((f.read() or "0").strip() or "0")
+    except:
+        return 0
+
+
+def save_last_seq(v):
+    try:
+        with open(LAST_SEQ_PATH, "w") as f:
+            f.write(str(int(v)))
+    except:
+        pass
+
+
+app_socket_last_seq = load_last_seq()
 
 
 def app_socket_send(cmd):
-    global app_socket_file
     with app_socket_lock:
-        f = app_socket_file
-        if not f:
+        s = app_socket_sock
+        if not s:
             return False
         try:
             if isinstance(cmd, str):
                 cmd = cmd.encode("utf-8")
-            f.write(cmd + b"\n")
+            s.sendall(cmd + b"\n")
             return True
         except:
             return False
@@ -540,7 +578,11 @@ def api_ingest():
 
 @app.route("/api/clear", methods=["POST"])
 def api_clear():
+    global app_socket_last_seq, app_socket_last_seq_dirty
     store.clear()
+    app_socket_last_seq = 0
+    app_socket_last_seq_dirty = 0
+    save_last_seq(0)
     socketio.emit("stats_update", store.get_global_stats())
     return jsonify({"ok": True})
 
@@ -553,7 +595,11 @@ def api_app_stop():
 
 @app.route("/api/app/clear", methods=["POST"])
 def api_app_clear():
+    global app_socket_last_seq, app_socket_last_seq_dirty
     ok = app_socket_send("CMD CLEAR_EVENTS")
+    app_socket_last_seq = 0
+    app_socket_last_seq_dirty = 0
+    save_last_seq(0)
     return jsonify({"ok": ok})
 
 
@@ -606,45 +652,70 @@ def app_socket_client(addr):
         print(f"[app-socket] invalid addr: {addr}")
         return
 
-    global app_socket_file, app_socket_sock
+    global app_socket_sock, app_socket_last_seq, app_socket_last_seq_dirty
     host, port = hp
     while True:
         s = None
         try:
             s = socket.create_connection((host, port), timeout=5)
-            s.settimeout(30)
-            f = s.makefile("rwb", buffering=0)
-            f.write(b"PING\n")
-            pong = f.readline().decode("utf-8", errors="ignore").strip()
+            s.settimeout(None)
+            s.sendall(b"PING\n")
+            buf = b""
+            while b"\n" not in buf:
+                chunk = s.recv(4096)
+                if not chunk:
+                    raise RuntimeError("eof")
+                buf += chunk
+            first, buf = buf.split(b"\n", 1)
+            pong = first.decode("utf-8", errors="ignore").strip()
             if pong != "PONG":
                 raise RuntimeError(f"bad handshake: {pong!r}")
             print(f"[app-socket] connected {host}:{port}")
             with app_socket_lock:
                 app_socket_sock = s
-                app_socket_file = f
+                last = app_socket_last_seq
+            s.sendall(f"HELLO {last}\n".encode("utf-8"))
 
             while True:
-                try:
-                    line = f.readline()
-                except socket.timeout:
+                r, _, _ = select.select([s], [], [], 10)
+                if not r:
                     try:
-                        f.write(b"PING\n")
-                        _ = f.readline()
-                        continue
+                        s.sendall(b"PING\n")
                     except:
-                        raise
-                if not line:
+                        raise RuntimeError("eof")
+                    continue
+                data = s.recv(4096)
+                if not data:
                     raise RuntimeError("eof")
+                buf += data
+                if b"\n" not in buf:
+                    continue
+                parts = buf.split(b"\n")
+                buf = parts[-1]
+                lines = parts[:-1]
                 try:
-                    raw = json.loads(line.decode("utf-8", errors="ignore"))
+                    for ln in lines:
+                        t = ln.decode("utf-8", errors="ignore").strip()
+                        if not t:
+                            continue
+                        if t in ("PONG", "PING", "OK"):
+                            continue
+                        raw = json.loads(t)
+                        ev = normalize_event(raw)
+                        if ev is None:
+                            continue
+                        seq = ev.get("seq", 0)
+                        if isinstance(seq, int) and seq > app_socket_last_seq:
+                            app_socket_last_seq = seq
+                            app_socket_last_seq_dirty += 1
+                            if app_socket_last_seq_dirty >= 50:
+                                app_socket_last_seq_dirty = 0
+                                save_last_seq(app_socket_last_seq)
+                        idx = store.add(ev)
+                        socketio.emit("new_event", {"idx": idx, "event": ev})
+                        socketio.emit("stats_update", store.get_global_stats())
                 except:
-                    continue
-                ev = normalize_event(raw)
-                if ev is None:
-                    continue
-                idx = store.add(ev)
-                socketio.emit("new_event", {"idx": idx, "event": ev})
-                socketio.emit("stats_update", store.get_global_stats())
+                    pass
         except Exception as e:
             try:
                 print(f"[app-socket] disconnected: {e}")
@@ -655,7 +726,6 @@ def app_socket_client(addr):
             with app_socket_lock:
                 if app_socket_sock is s:
                     app_socket_sock = None
-                    app_socket_file = None
             try:
                 if s:
                     s.close()
@@ -688,6 +758,102 @@ def api_search():
         offset=offset, limit=limit,
     )
     return jsonify(result)
+
+
+@socketio.on("rpc")
+def rpc_call(msg):
+    rid = msg.get("id")
+    method = msg.get("method")
+    params = msg.get("params") or {}
+    try:
+        if method == "search":
+            res = store.search(
+                query=params.get("q"),
+                pid=params.get("pid"),
+                tid=params.get("tid"),
+                comm=params.get("comm"),
+                nr=params.get("nr"),
+                name=params.get("name"),
+                antidebug_only=bool(params.get("antidebug")),
+                has_retval=bool(params.get("has_retval")),
+                offset=int(params.get("offset", 0) or 0),
+                limit=int(params.get("limit", 100) or 100),
+            )
+            emit("rpc_result", {"id": rid, "ok": True, "data": res})
+            return
+
+        if method == "clear":
+            api_clear()
+            emit("rpc_result", {"id": rid, "ok": True, "data": {"ok": True}})
+            return
+
+        if method == "get_pids":
+            emit("rpc_result", {"id": rid, "ok": True, "data": store.get_pid_summary()})
+            return
+
+        if method == "pid_events":
+            pid = int(params.get("pid") or 0)
+            offset = int(params.get("offset", 0) or 0)
+            limit = int(params.get("limit", 200) or 200)
+            emit("rpc_result", {"id": rid, "ok": True, "data": store.get_pid_events(pid, offset, limit)})
+            return
+
+        if method == "pid_timeline":
+            pid = int(params.get("pid") or 0)
+            emit("rpc_result", {"id": rid, "ok": True, "data": store.get_pid_timeline(pid)})
+            return
+
+        if method == "thread_analyze":
+            pid = int(params.get("pid") or 0)
+            with app.test_request_context(f"/api/thread_analyze?pid={pid}"):
+                resp = api_thread_analyze()
+            if isinstance(resp, tuple):
+                resp = resp[0]
+            emit("rpc_result", {"id": rid, "ok": True, "data": resp.get_json()})
+            return
+
+        if method == "maps":
+            pid = int(params.get("pid") or 0)
+            with app.test_request_context(f"/api/maps?pid={pid}"):
+                resp = api_maps()
+            if isinstance(resp, tuple):
+                resp = resp[0]
+            emit("rpc_result", {"id": rid, "ok": True, "data": resp.get_json()})
+            return
+
+        if method == "symbol_list":
+            emit("rpc_result", {"id": rid, "ok": True, "data": api_symbol_list().get_json()})
+            return
+
+        if method == "symbol_resolve":
+            mod = (params.get("module") or "").strip()
+            off = (params.get("offset_hex") or "").strip().lower()
+            if not mod or not off.startswith("0x"):
+                emit("rpc_result", {"id": rid, "ok": True, "data": {"ok": False}})
+                return
+            path = os.path.join(SYMBOL_DIR, os.path.basename(mod))
+            if not os.path.exists(path):
+                emit("rpc_result", {"id": rid, "ok": True, "data": {"ok": False}})
+                return
+            r = resolve_symbol_from_file(path, off)
+            emit("rpc_result", {"id": rid, "ok": True, "data": {"ok": True, "result": r}})
+            return
+
+        if method == "app_cmd":
+            cmd = (params.get("cmd") or "").strip().upper()
+            ok = False
+            if cmd == "STOP":
+                ok = app_socket_send("CMD STOP")
+            elif cmd == "CLEAR_EVENTS":
+                ok = app_socket_send("CMD CLEAR_EVENTS")
+            elif cmd == "CLEAR_HISTORY":
+                ok = app_socket_send("CMD CLEAR_HISTORY")
+            emit("rpc_result", {"id": rid, "ok": True, "data": {"ok": ok}})
+            return
+
+        emit("rpc_result", {"id": rid, "ok": False, "error": "unknown_method"})
+    except Exception as e:
+        emit("rpc_result", {"id": rid, "ok": False, "error": str(e)})
 
 
 @app.route("/api/thread_analyze")
@@ -798,6 +964,52 @@ def api_export_csv():
     with open(tmp, "w") as f:
         f.write(data)
     return send_file(tmp, as_attachment=True, download_name=fname)
+
+
+@app.route("/api/symbol/upload", methods=["POST"])
+def api_symbol_upload():
+    if "file" not in request.files:
+        return jsonify({"ok": False, "error": "no_file"}), 400
+    f = request.files["file"]
+    name = (f.filename or "").strip()
+    if not name:
+        return jsonify({"ok": False, "error": "bad_filename"}), 400
+    base = os.path.basename(name)
+    dst = os.path.join(SYMBOL_DIR, base)
+    f.save(dst)
+    return jsonify({"ok": True, "file": base})
+
+
+@app.route("/api/symbol/list")
+def api_symbol_list():
+    try:
+        items = sorted([x for x in os.listdir(SYMBOL_DIR) if x and not x.startswith(".")])
+        return jsonify({"ok": True, "files": items})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+def resolve_symbol_from_file(path, offset_hex):
+    tool = shutil.which("llvm-addr2line") or shutil.which("addr2line")
+    if not tool:
+        return None
+    try:
+        p = subprocess.run(
+            [tool, "-f", "-C", "-e", path, offset_hex],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=6,
+        )
+        out = (p.stdout or b"").decode("utf-8", errors="ignore").splitlines()
+        if len(out) < 2:
+            return None
+        fn = (out[0] or "").strip()
+        fl = (out[1] or "").strip()
+        if not fn and not fl:
+            return None
+        return {"function": fn, "fileline": fl}
+    except Exception:
+        return None
 
 
 @app.route("/api/load", methods=["POST"])
@@ -920,6 +1132,10 @@ def main():
     # Load file if specified
     if args.load:
         load_jsonl_file(args.load)
+
+    if not _EVENTLET_OK:
+        print("ERROR: WebSocket-only mode requires eventlet. Install: pip install -r SVC_PC_View/requirements.txt")
+        sys.exit(2)
 
     # Start bridge connection
     if not args.no_bridge:

@@ -423,6 +423,126 @@ public final class SvcEventDao_Impl implements SvcEventDao {
   }
 
   @Override
+  public Object afterSeq(final long seq, final int limit,
+      final Continuation<? super List<SvcEventEntity>> $completion) {
+    final String _sql = "SELECT * FROM events WHERE seq > ? ORDER BY seq ASC LIMIT ?";
+    final RoomSQLiteQuery _statement = RoomSQLiteQuery.acquire(_sql, 2);
+    int _argIndex = 1;
+    _statement.bindLong(_argIndex, seq);
+    _argIndex = 2;
+    _statement.bindLong(_argIndex, limit);
+    final CancellationSignal _cancellationSignal = DBUtil.createCancellationSignal();
+    return CoroutinesRoom.execute(__db, false, _cancellationSignal, new Callable<List<SvcEventEntity>>() {
+      @Override
+      @NonNull
+      public List<SvcEventEntity> call() throws Exception {
+        final Cursor _cursor = DBUtil.query(__db, _statement, false, null);
+        try {
+          final int _cursorIndexOfSeq = CursorUtil.getColumnIndexOrThrow(_cursor, "seq");
+          final int _cursorIndexOfNr = CursorUtil.getColumnIndexOrThrow(_cursor, "nr");
+          final int _cursorIndexOfName = CursorUtil.getColumnIndexOrThrow(_cursor, "name");
+          final int _cursorIndexOfTgid = CursorUtil.getColumnIndexOrThrow(_cursor, "tgid");
+          final int _cursorIndexOfPid = CursorUtil.getColumnIndexOrThrow(_cursor, "pid");
+          final int _cursorIndexOfUid = CursorUtil.getColumnIndexOrThrow(_cursor, "uid");
+          final int _cursorIndexOfComm = CursorUtil.getColumnIndexOrThrow(_cursor, "comm");
+          final int _cursorIndexOfPc = CursorUtil.getColumnIndexOrThrow(_cursor, "pc");
+          final int _cursorIndexOfCaller = CursorUtil.getColumnIndexOrThrow(_cursor, "caller");
+          final int _cursorIndexOfFp = CursorUtil.getColumnIndexOrThrow(_cursor, "fp");
+          final int _cursorIndexOfSp = CursorUtil.getColumnIndexOrThrow(_cursor, "sp");
+          final int _cursorIndexOfBt = CursorUtil.getColumnIndexOrThrow(_cursor, "bt");
+          final int _cursorIndexOfCloneFn = CursorUtil.getColumnIndexOrThrow(_cursor, "cloneFn");
+          final int _cursorIndexOfRet = CursorUtil.getColumnIndexOrThrow(_cursor, "ret");
+          final int _cursorIndexOfA0 = CursorUtil.getColumnIndexOrThrow(_cursor, "a0");
+          final int _cursorIndexOfA1 = CursorUtil.getColumnIndexOrThrow(_cursor, "a1");
+          final int _cursorIndexOfA2 = CursorUtil.getColumnIndexOrThrow(_cursor, "a2");
+          final int _cursorIndexOfA3 = CursorUtil.getColumnIndexOrThrow(_cursor, "a3");
+          final int _cursorIndexOfA4 = CursorUtil.getColumnIndexOrThrow(_cursor, "a4");
+          final int _cursorIndexOfA5 = CursorUtil.getColumnIndexOrThrow(_cursor, "a5");
+          final int _cursorIndexOfDesc = CursorUtil.getColumnIndexOrThrow(_cursor, "desc");
+          final int _cursorIndexOfFpChain = CursorUtil.getColumnIndexOrThrow(_cursor, "fpChain");
+          final int _cursorIndexOfCreatedAtNs = CursorUtil.getColumnIndexOrThrow(_cursor, "createdAtNs");
+          final List<SvcEventEntity> _result = new ArrayList<SvcEventEntity>(_cursor.getCount());
+          while (_cursor.moveToNext()) {
+            final SvcEventEntity _item;
+            final long _tmpSeq;
+            _tmpSeq = _cursor.getLong(_cursorIndexOfSeq);
+            final int _tmpNr;
+            _tmpNr = _cursor.getInt(_cursorIndexOfNr);
+            final String _tmpName;
+            if (_cursor.isNull(_cursorIndexOfName)) {
+              _tmpName = null;
+            } else {
+              _tmpName = _cursor.getString(_cursorIndexOfName);
+            }
+            final int _tmpTgid;
+            _tmpTgid = _cursor.getInt(_cursorIndexOfTgid);
+            final int _tmpPid;
+            _tmpPid = _cursor.getInt(_cursorIndexOfPid);
+            final int _tmpUid;
+            _tmpUid = _cursor.getInt(_cursorIndexOfUid);
+            final String _tmpComm;
+            if (_cursor.isNull(_cursorIndexOfComm)) {
+              _tmpComm = null;
+            } else {
+              _tmpComm = _cursor.getString(_cursorIndexOfComm);
+            }
+            final long _tmpPc;
+            _tmpPc = _cursor.getLong(_cursorIndexOfPc);
+            final long _tmpCaller;
+            _tmpCaller = _cursor.getLong(_cursorIndexOfCaller);
+            final long _tmpFp;
+            _tmpFp = _cursor.getLong(_cursorIndexOfFp);
+            final long _tmpSp;
+            _tmpSp = _cursor.getLong(_cursorIndexOfSp);
+            final String _tmpBt;
+            if (_cursor.isNull(_cursorIndexOfBt)) {
+              _tmpBt = null;
+            } else {
+              _tmpBt = _cursor.getString(_cursorIndexOfBt);
+            }
+            final long _tmpCloneFn;
+            _tmpCloneFn = _cursor.getLong(_cursorIndexOfCloneFn);
+            final long _tmpRet;
+            _tmpRet = _cursor.getLong(_cursorIndexOfRet);
+            final long _tmpA0;
+            _tmpA0 = _cursor.getLong(_cursorIndexOfA0);
+            final long _tmpA1;
+            _tmpA1 = _cursor.getLong(_cursorIndexOfA1);
+            final long _tmpA2;
+            _tmpA2 = _cursor.getLong(_cursorIndexOfA2);
+            final long _tmpA3;
+            _tmpA3 = _cursor.getLong(_cursorIndexOfA3);
+            final long _tmpA4;
+            _tmpA4 = _cursor.getLong(_cursorIndexOfA4);
+            final long _tmpA5;
+            _tmpA5 = _cursor.getLong(_cursorIndexOfA5);
+            final String _tmpDesc;
+            if (_cursor.isNull(_cursorIndexOfDesc)) {
+              _tmpDesc = null;
+            } else {
+              _tmpDesc = _cursor.getString(_cursorIndexOfDesc);
+            }
+            final String _tmpFpChain;
+            if (_cursor.isNull(_cursorIndexOfFpChain)) {
+              _tmpFpChain = null;
+            } else {
+              _tmpFpChain = _cursor.getString(_cursorIndexOfFpChain);
+            }
+            final long _tmpCreatedAtNs;
+            _tmpCreatedAtNs = _cursor.getLong(_cursorIndexOfCreatedAtNs);
+            _item = new SvcEventEntity(_tmpSeq,_tmpNr,_tmpName,_tmpTgid,_tmpPid,_tmpUid,_tmpComm,_tmpPc,_tmpCaller,_tmpFp,_tmpSp,_tmpBt,_tmpCloneFn,_tmpRet,_tmpA0,_tmpA1,_tmpA2,_tmpA3,_tmpA4,_tmpA5,_tmpDesc,_tmpFpChain,_tmpCreatedAtNs);
+            _result.add(_item);
+          }
+          return _result;
+        } finally {
+          _cursor.close();
+          _statement.release();
+        }
+      }
+    }, $completion);
+  }
+
+  @Override
   public Object search(final String query, final int limit,
       final Continuation<? super List<SvcEventEntity>> $completion) {
     final String _sql = "\n"

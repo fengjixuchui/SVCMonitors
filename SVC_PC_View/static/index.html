@@ -60,6 +60,10 @@ a:hover { text-decoration: underline; }
 .event-table tr:hover { background: var(--bg3); }
 .event-table tr.antidebug { background: rgba(248,81,73,0.1); }
 .event-table tr.antidebug:hover { background: rgba(248,81,73,0.2); }
+.event-table tr.sc-proc { box-shadow: inset 4px 0 0 var(--red); }
+.event-table tr.sc-net { box-shadow: inset 4px 0 0 var(--accent); }
+.event-table tr.sc-file { box-shadow: inset 4px 0 0 var(--green); }
+.event-table tr.sc-env { box-shadow: inset 4px 0 0 var(--orange); }
 .event-table .nr { color: var(--cyan); }
 .event-table .name { color: var(--green); font-weight: 600; }
 .event-table .pid-cell { color: var(--orange); }
@@ -71,6 +75,20 @@ a:hover { text-decoration: underline; }
 .event-table .badge { display: inline-block; padding: 1px 6px; border-radius: 3px; font-size: 10px; font-weight: 600; }
 .badge-antidebug { background: rgba(248,81,73,0.2); color: var(--red); }
 .badge-bt { background: rgba(88,166,255,0.2); color: var(--accent); }
+.badge-proc { background: rgba(248,81,73,0.2); color: var(--red); }
+.badge-net { background: rgba(88,166,255,0.2); color: var(--accent); }
+.badge-file { background: rgba(63,185,80,0.2); color: var(--green); }
+.badge-env { background: rgba(210,153,34,0.2); color: var(--orange); }
+
+/* Thread list panel */
+.tid-layout { display: flex; gap: 12px; }
+.tid-panel { width: 240px; flex-shrink: 0; background: var(--bg2); border: 1px solid var(--border); border-radius: 6px; padding: 10px; height: fit-content; }
+.tid-panel h4 { color: var(--text2); font-size: 11px; text-transform: uppercase; margin-bottom: 8px; letter-spacing: 0.5px; }
+.tid-item { display: flex; align-items: center; gap: 6px; padding: 4px 2px; cursor: pointer; }
+.tid-item:hover { background: var(--bg3); border-radius: 4px; }
+.tid-item .tid { color: var(--orange); width: 72px; }
+.tid-item .cnt { color: var(--text2); margin-left: auto; }
+.event-main { flex: 1; min-width: 0; }
 
 /* Pagination */
 .pagination { display: flex; align-items: center; gap: 8px; padding: 10px 12px; background: var(--bg2); border-top: 1px solid var(--border); font-size: 12px; color: var(--text2); flex-shrink: 0; }
@@ -187,8 +205,24 @@ a:hover { text-decoration: underline; }
       <button class="secondary" @click="exportCsv()">Export CSV</button>
     </div>
 
-    <div class="panel" ref="eventPanel">
-      <table class="event-table">
+    <div class="panel tid-layout" ref="eventPanel">
+      <div class="tid-panel">
+        <h4>Thread (TID)</h4>
+        <div class="tid-item" @click="searchTid=null; searchOffset=0; doSearch()">
+          <input type="checkbox" :checked="searchTid===null" />
+          <span class="tid">ALL</span>
+          <span class="cnt">{{ searchResult.total || stats.total_events || 0 }}</span>
+        </div>
+        <div v-for="t in (searchResult.tid_stats || [])" :key="t.tid" class="tid-item"
+             @click="searchTid=t.tid; searchOffset=0; doSearch()">
+          <input type="checkbox" :checked="searchTid===t.tid" />
+          <span class="tid">{{ t.tid }}</span>
+          <span class="cnt">{{ t.count }}</span>
+        </div>
+      </div>
+
+      <div class="event-main">
+        <table class="event-table">
         <thead>
           <tr>
             <th style="width:40px">#</th>
@@ -205,11 +239,14 @@ a:hover { text-decoration: underline; }
         </thead>
         <tbody>
           <tr v-for="(ev, i) in events" :key="ev._idx || i"
-              :class="{ antidebug: ev.antidebug }"
+              :class="[syscallClass(ev), { antidebug: ev.antidebug }]"
               @click="showDetail(ev, searchResult.indices ? searchResult.indices[i] : i)">
             <td>{{ searchResult.indices ? searchResult.indices[i] : (searchOffset + i) }}</td>
             <td class="nr">{{ ev.nr }}</td>
-            <td class="name">{{ ev.name || ('syscall_' + ev.nr) }}</td>
+            <td class="name">
+              <span v-if="syscallTag(ev)" class="badge" :class="syscallTag(ev).cls">{{ syscallTag(ev).text }}</span>
+              {{ ev.name || ('syscall_' + ev.nr) }}
+            </td>
             <td class="pid-cell" @click.stop="filterByPid(ev.pid)">{{ ev.pid }}</td>
             <td>{{ ev.tid || '-' }}</td>
             <td class="comm">{{ ev.comm }}</td>
@@ -224,6 +261,7 @@ a:hover { text-decoration: underline; }
         </tbody>
       </table>
       <div v-if="events.length === 0" class="loading">No events{{ searchQuery ? ' matching your search' : '' }}</div>
+      </div>
     </div>
 
     <div class="pagination">
@@ -235,6 +273,7 @@ a:hover { text-decoration: underline; }
         <option :value="200">200/page</option>
         <option :value="500">500/page</option>
         <option :value="1000">1000/page</option>
+        <option :value="20000">20000/page</option>
       </select>
       <div class="info">
         Showing {{ searchOffset + 1 }}-{{ searchOffset + events.length }}
@@ -276,11 +315,56 @@ a:hover { text-decoration: underline; }
     <div class="search-bar">
       <input v-model.number="mapsPid" placeholder="PID (TGID)" style="width:140px" @keyup.enter="loadMaps()">
       <button @click="loadMaps()">Load</button>
-      <button class="secondary" @click="mapsPid=null; mapsText=''; mapsErr=''">Reset</button>
+      <input v-model="mapsFilterPath" placeholder="Path contains" style="width:160px" @keyup.enter="renderMaps()">
+      <input v-model="mapsFilterPerm" placeholder="Perm (e.g. r-xp)" style="width:120px" @keyup.enter="renderMaps()">
+      <input v-model="mapsFilterAddr" placeholder="Addr (0x...)" style="width:140px" @keyup.enter="renderMaps()">
+      <button class="secondary" @click="mapsFilterPath=''; mapsFilterPerm=''; mapsFilterAddr=''; mapsFocusAddr=null; renderMaps()">Reset Filter</button>
+      <button class="secondary" @click="mapsPid=null; mapsText=''; mapsErr=''; mapsEntries=[]; mapsFocusAddr=null; renderMaps()">Reset</button>
     </div>
     <div class="panel">
       <div v-if="mapsErr" style="color:var(--red);white-space:pre-wrap;">{{ mapsErr }}</div>
-      <pre v-if="mapsText" style="white-space:pre;overflow:auto;background:var(--bg2);border:1px solid var(--border);padding:12px;border-radius:6px;">{{ mapsText }}</pre>
+      <div v-if="mapsText" class="chart-box" style="margin-bottom:12px">
+        <h4>Address Space</h4>
+        <div id="mapsChart" class="chart-full"></div>
+      </div>
+
+      <div v-if="mapsText" class="chart-box" style="margin-bottom:12px">
+        <h4>Symbols (optional)</h4>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+          <input type="file" ref="symInput" @change="uploadSymbol" style="display:none" />
+          <button class="secondary" @click="$refs.symInput.click()">Upload .so / symbols</button>
+          <button class="secondary" @click="loadSymbolList()">Refresh</button>
+          <span style="color:var(--text2)">Uploaded: {{ (symbolFiles||[]).length }}</span>
+        </div>
+        <div style="margin-top:8px;color:var(--text2);font-size:12px;white-space:pre-wrap">{{ symbolFiles.join(', ') }}</div>
+      </div>
+
+      <div v-if="mapsEntries.length" class="chart-box">
+        <h4>Mappings</h4>
+        <table class="event-table">
+          <thead>
+            <tr>
+              <th style="width:160px">Range</th>
+              <th style="width:60px">Perm</th>
+              <th style="width:90px">Offset</th>
+              <th>Path</th>
+              <th style="width:60px">Flag</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="(m, i) in mapsEntries" :key="i" @click="mapsFocusAddr=m.start; renderMaps()">
+              <td class="mono">0x{{ m.startHex }}-0x{{ m.endHex }}</td>
+              <td class="mono">{{ m.perm }}</td>
+              <td class="mono">0x{{ m.offHex }}</td>
+              <td class="args" :title="m.path">{{ m.path || '-' }}</td>
+              <td>
+                <span v-if="m.suspicious" class="badge badge-antidebug">SUS</span>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
       <div v-if="!mapsText && !mapsErr" class="loading">Enter PID (TGID) and load /proc/&lt;pid&gt;/maps.</div>
     </div>
   </template>
@@ -469,6 +553,28 @@ a:hover { text-decoration: underline; }
         </ul>
       </div>
 
+      <div class="detail-section" v-if="resolvedBacktrace && resolvedBacktrace.length">
+        <h4>Resolved Backtrace (maps)</h4>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;">
+          <button class="secondary" @click="refreshResolvedBacktrace()">Refresh</button>
+          <button class="secondary" @click="resolveSymbolsForBacktrace()" :disabled="resolvingSymbols">Resolve symbols</button>
+          <button class="secondary" v-if="detailEvent && detailEvent.pid" @click="mapsPid=detailEvent.pid; mapsFocusAddr=(detailEvent.a0||null); tab='maps'; loadMaps()">Load maps</button>
+        </div>
+        <pre style="background:var(--bg);padding:10px;border-radius:4px;overflow-x:auto;white-space:pre-wrap;font-size:12px;color:var(--text);border:1px solid var(--border);">{{
+          resolvedBacktrace.map((l) => {
+            if (!l.module) return (l.addrHex + ' → ' + (l.text || 'unmapped'));
+            const base = l.addrHex + ' → ' + l.module + ' + ' + l.offsetHex;
+            const sym = l.symbol ? ('  ' + (l.symbol.function || '') + (l.symbol.fileline ? ('  ' + l.symbol.fileline) : '')) : '';
+            return base + sym;
+          }).join('\n')
+        }}</pre>
+      </div>
+
+      <div class="detail-section" v-if="detailEvent && detailEvent.name && (detailEvent.name.includes('mmap') || detailEvent.name.includes('mprotect'))">
+        <h4>Maps Link</h4>
+        <button class="secondary" @click="mapsPid=detailEvent.pid; mapsFocusAddr=(detailEvent.a0||null); tab='maps'; loadMaps()">Jump to Maps (a0)</button>
+      </div>
+
       <div class="detail-section" v-if="detailEvent.vma_info">
         <h4>VMA Info</h4>
         <pre style="background:var(--bg);padding:10px;border-radius:4px;font-size:12px;color:var(--cyan);border:1px solid var(--border);">{{ detailEvent.vma_info }}</pre>
@@ -511,14 +617,26 @@ createApp({
     const searchHasRetval = ref(false);
     const searchOffset = ref(0);
     const searchLimit = ref(100);
-    const searchResult = reactive({ total: 0, indices: null });
+    const MAX_EVENTS = 20000;
+    const searchResult = reactive({ total: 0, indices: null, tid_stats: [] });
 
     // Detail
     const detailEvent = ref(null);
+    const resolvedBacktrace = ref([]);
+    const resolvingSymbols = ref(false);
 
     const mapsPid = ref(null);
     const mapsText = ref('');
     const mapsErr = ref('');
+    const mapsFilterPath = ref('');
+    const mapsFilterPerm = ref('');
+    const mapsFilterAddr = ref('');
+    const mapsFocusAddr = ref(null);
+    const mapsEntries = ref([]);
+    const mapsCache = new Map();
+    const symbolFiles = ref([]);
+    const symbolCache = new Map();
+    let mapsChart = null;
 
     // PIDs
     const pids = ref([]);
@@ -541,7 +659,31 @@ createApp({
     let lastTotal = 0;
 
     // ─── Socket.IO ───
-    const socket = io();
+    const socket = io({ transports: ['websocket'], upgrade: false });
+    let rpcSeq = 1;
+    const rpcWait = new Map();
+
+    socket.on('rpc_result', (msg) => {
+      const cb = rpcWait.get(msg.id);
+      if (cb) {
+        rpcWait.delete(msg.id);
+        cb(msg);
+      }
+    });
+
+    function rpc(method, params) {
+      const id = rpcSeq++;
+      return new Promise((resolve) => {
+        rpcWait.set(id, resolve);
+        socket.emit('rpc', { id, method, params });
+        setTimeout(() => {
+          if (rpcWait.has(id)) {
+            rpcWait.delete(id);
+            resolve({ id, ok: false, error: 'timeout' });
+          }
+        }, 8000);
+      });
+    }
 
     socket.on('bridge_status', (data) => {
       bridgeConnected.value = data.connected;
@@ -562,10 +704,9 @@ createApp({
       // If in live mode (no search filter), append to events
       if (!searchQuery.value && !searchPid.value && !searchComm.value && !searchNr.value && !searchAntidebug.value) {
         events.value.push(data.event);
-        // Keep last N events in view
-        if (events.value.length > searchLimit.value * 2) {
-          events.value = events.value.slice(-searchLimit.value);
-          searchOffset.value = Math.max(0, data.idx - searchLimit.value + 1);
+        if (events.value.length > MAX_EVENTS) {
+          events.value = events.value.slice(-MAX_EVENTS);
+          searchOffset.value = Math.max(0, data.idx - MAX_EVENTS + 1);
         }
       }
     });
@@ -573,21 +714,23 @@ createApp({
     // ─── API calls ───
     async function doSearch() {
       const params = new URLSearchParams();
-      if (searchQuery.value) params.set('q', searchQuery.value);
-      if (searchPid.value) params.set('pid', searchPid.value);
-      if (searchTid.value) params.set('tid', searchTid.value);
-      if (searchComm.value) params.set('comm', searchComm.value);
-      if (searchNr.value) params.set('nr', searchNr.value);
-      if (searchAntidebug.value) params.set('antidebug', '1');
-      if (searchHasRetval.value) params.set('has_retval', '1');
-      params.set('offset', searchOffset.value);
-      params.set('limit', searchLimit.value);
+      const payload = {};
+      if (searchQuery.value) payload.q = searchQuery.value;
+      if (searchPid.value) payload.pid = searchPid.value;
+      if (searchTid.value) payload.tid = searchTid.value;
+      if (searchComm.value) payload.comm = searchComm.value;
+      if (searchNr.value) payload.nr = searchNr.value;
+      if (searchAntidebug.value) payload.antidebug = true;
+      if (searchHasRetval.value) payload.has_retval = true;
+      payload.offset = searchOffset.value;
+      payload.limit = Math.min(MAX_EVENTS, searchLimit.value);
 
-      const resp = await fetch('/api/search?' + params);
-      const data = await resp.json();
+      const resp = await rpc('search', payload);
+      const data = (resp && resp.ok) ? resp.data : { events: [], total: 0, indices: null, tid_stats: [] };
       events.value = data.events;
       searchResult.total = data.total;
       searchResult.indices = data.indices;
+      searchResult.tid_stats = data.tid_stats || [];
     }
 
     function resetSearch() {
@@ -606,35 +749,256 @@ createApp({
     }
 
     async function clearAll() {
-      await fetch('/api/clear', { method: 'POST' });
+      await rpc('clear', {});
       resetSearch();
     }
 
     async function stopApp() {
-      await fetch('/api/app/stop', { method: 'POST' });
+      await rpc('app_cmd', { cmd: 'STOP' });
     }
 
     async function clearApp() {
-      await fetch('/api/app/clear', { method: 'POST' });
-      await fetch('/api/clear', { method: 'POST' });
+      await rpc('app_cmd', { cmd: 'CLEAR_EVENTS' });
+      await rpc('clear', {});
       resetSearch();
     }
 
     async function clearAppHistory() {
-      await fetch('/api/app/clear_history', { method: 'POST' });
+      await rpc('app_cmd', { cmd: 'CLEAR_HISTORY' });
     }
 
     async function loadMaps() {
       mapsErr.value = '';
       mapsText.value = '';
       if (!mapsPid.value) return;
-      const resp = await fetch('/api/maps?pid=' + mapsPid.value);
-      const data = await resp.json();
+      const resp = await rpc('maps', { pid: mapsPid.value });
+      const data = (resp && resp.ok) ? resp.data : { ok: false, error: 'failed' };
       if (data.ok) {
         mapsText.value = data.maps || '';
+        mapsCache.set(mapsPid.value, parseMaps(mapsText.value));
+        renderMaps();
+        loadSymbolList();
       } else {
         mapsErr.value = data.error || 'failed';
       }
+    }
+
+    function parseMaps(text) {
+      const lines = (text || '').split('\n').map(s => s.trim()).filter(Boolean);
+      const out = [];
+      for (const ln of lines) {
+        const m = ln.match(/^([0-9a-fA-F]+)-([0-9a-fA-F]+)\s+([rwxps\-]{4})\s+([0-9a-fA-F]+)\s+(\S+)\s+(\d+)\s*(.*)$/);
+        if (!m) continue;
+        const start = parseInt(m[1], 16);
+        const end = parseInt(m[2], 16);
+        const perm = m[3];
+        const off = parseInt(m[4], 16);
+        const path = (m[7] || '').trim();
+        const anon = !path || path.startsWith('[');
+        const rwx = perm.includes('r') && perm.includes('w') && perm.includes('x');
+        const pathLow = path.toLowerCase();
+        const nonStd =
+          !!path && !pathLow.startsWith('/system/') && !pathLow.startsWith('/apex/') &&
+          !pathLow.startsWith('/vendor/') && !pathLow.startsWith('/product/') &&
+          !pathLow.startsWith('/data/app/') && !pathLow.startsWith('/data/') &&
+          !pathLow.startsWith('/dev/') && !pathLow.startsWith('/memfd:') && !pathLow.startsWith('memfd:');
+        const suspicious = (anon && rwx) || nonStd;
+        out.push({
+          start, end, perm, off, path,
+          anon, suspicious,
+          startHex: start.toString(16),
+          endHex: end.toString(16),
+          offHex: off.toString(16),
+        });
+      }
+      out.sort((a, b) => a.start - b.start);
+      return out;
+    }
+
+    function filterMaps(entries) {
+      let list = entries || [];
+      const p = (mapsFilterPath.value || '').trim().toLowerCase();
+      const perm = (mapsFilterPerm.value || '').trim();
+      const addrStr = (mapsFilterAddr.value || '').trim().toLowerCase();
+      let addr = null;
+      if (addrStr.startsWith('0x')) {
+        const v = parseInt(addrStr.slice(2), 16);
+        if (!Number.isNaN(v)) addr = v;
+      }
+      if (p) list = list.filter(e => (e.path || '').toLowerCase().includes(p));
+      if (perm) list = list.filter(e => e.perm.includes(perm.replace(/[^rwxps\-]/g, '')));
+      if (addr !== null) list = list.filter(e => e.start <= addr && addr < e.end);
+      return list;
+    }
+
+    function permColor(perm) {
+      const r = perm.includes('r');
+      const w = perm.includes('w');
+      const x = perm.includes('x');
+      if (r && w && x) return '#bc8cff';
+      if (x) return '#3fb950';
+      if (w) return '#f85149';
+      if (r) return '#58a6ff';
+      return '#8b949e';
+    }
+
+    function renderMaps() {
+      const pid = mapsPid.value;
+      if (!pid || !mapsText.value) return;
+      const all = mapsCache.get(pid) || parseMaps(mapsText.value);
+      mapsCache.set(pid, all);
+      const filtered = filterMaps(all);
+      mapsEntries.value = filtered;
+      renderMapsChart(all, filtered);
+    }
+
+    function renderMapsChart(all, filtered) {
+      const el = document.getElementById('mapsChart');
+      if (!el) return;
+      if (!mapsChart) mapsChart = echarts.init(el, 'dark');
+      const min = all.length ? all[0].start : 0;
+      const max = all.length ? all[all.length - 1].end : 1;
+      const focus = mapsFocusAddr.value;
+      const data = filtered.map(e => ({
+        value: [e.start, e.end],
+        perm: e.perm,
+        path: e.path,
+        suspicious: e.suspicious,
+      }));
+      mapsChart.setOption({
+        backgroundColor: 'transparent',
+        tooltip: {
+          trigger: 'item',
+          formatter: p => {
+            const d = p.data;
+            const s = '0x' + d.value[0].toString(16);
+            const e = '0x' + d.value[1].toString(16);
+            return `${s} - ${e}<br/>${d.perm}<br/>${(d.path || '-')}${d.suspicious ? '<br/><span style="color:#f85149">SUS</span>' : ''}`;
+          }
+        },
+        xAxis: { type: 'value', min, max, axisLabel: { formatter: v => '0x' + Number(v).toString(16), color: '#8b949e' }, splitLine: { show: false } },
+        yAxis: { type: 'category', data: ['mem'], axisLabel: { color: '#8b949e' } },
+        dataZoom: [{ type: 'inside' }, { type: 'slider', bottom: 10 }],
+        series: [{
+          type: 'custom',
+          renderItem: (params, api) => {
+            const start = api.value(0);
+            const end = api.value(1);
+            const y = api.coord([start, 0])[1];
+            const x0 = api.coord([start, 0])[0];
+            const x1 = api.coord([end, 0])[0];
+            const h = api.size([0, 1])[1] * 0.6;
+            const perm = params.data.perm || '----';
+            const col = permColor(perm);
+            const isSus = !!params.data.suspicious;
+            return {
+              type: 'rect',
+              shape: { x: x0, y: y - h / 2, width: Math.max(1, x1 - x0), height: h },
+              style: { fill: col, opacity: isSus ? 0.95 : 0.7, stroke: isSus ? '#f85149' : 'transparent', lineWidth: isSus ? 1 : 0 }
+            };
+          },
+          encode: { x: [0, 1], y: 0 },
+          data,
+        }],
+      }, true);
+
+      if (focus && typeof focus === 'number') {
+        mapsChart.dispatchAction({ type: 'dataZoom', startValue: Math.max(min, focus - (max - min) * 0.02), endValue: Math.min(max, focus + (max - min) * 0.02) });
+      }
+      mapsChart.resize();
+    }
+
+    async function ensureMapsForPid(pid) {
+      if (!pid) return null;
+      if (mapsCache.has(pid)) return mapsCache.get(pid);
+      const resp = await rpc('maps', { pid });
+      const data = (resp && resp.ok) ? resp.data : { ok: false };
+      if (!data.ok) return null;
+      const parsed = parseMaps(data.maps || '');
+      mapsCache.set(pid, parsed);
+      return parsed;
+    }
+
+    function resolveAddrByMaps(pid, addr) {
+      const maps = mapsCache.get(pid);
+      if (!maps || addr == null) return null;
+      const a = Number(addr);
+      if (Number.isNaN(a)) return null;
+      let lo = 0, hi = maps.length - 1;
+      while (lo <= hi) {
+        const mid = (lo + hi) >> 1;
+        const m = maps[mid];
+        if (a < m.start) hi = mid - 1;
+        else if (a >= m.end) lo = mid + 1;
+        else return m;
+      }
+      return null;
+    }
+
+    async function refreshResolvedBacktrace() {
+      const ev = detailEvent.value;
+      resolvedBacktrace.value = [];
+      if (!ev || !ev.pid || !ev.backtrace || !Array.isArray(ev.backtrace)) return;
+      await ensureMapsForPid(ev.pid);
+      const out = [];
+      for (const x of ev.backtrace.slice(0, 24)) {
+        const addr = typeof x === 'number' ? x : parseInt(String(x).replace(/^0x/, ''), 16);
+        if (!addr) continue;
+        const m = resolveAddrByMaps(ev.pid, addr);
+        if (!m) {
+          out.push({ addrHex: '0x' + addr.toString(16), text: 'unmapped' });
+          continue;
+        }
+        const baseName = (m.path || '[anon]').split('/').pop();
+        const off = addr - m.start;
+        const offHex = '0x' + off.toString(16);
+        const key = baseName + '|' + offHex;
+        const sym = symbolCache.get(key) || null;
+        out.push({
+          addrHex: '0x' + addr.toString(16),
+          module: baseName,
+          offsetHex: offHex,
+          perm: m.perm,
+          path: m.path || '',
+          suspicious: m.suspicious,
+          symbol: sym,
+        });
+      }
+      resolvedBacktrace.value = out;
+    }
+
+    async function resolveSymbolsForBacktrace() {
+      if (resolvingSymbols.value) return;
+      resolvingSymbols.value = true;
+      try {
+        for (const l of resolvedBacktrace.value) {
+          if (!l.module || !l.offsetHex) continue;
+          const key = l.module + '|' + l.offsetHex;
+          if (symbolCache.has(key)) continue;
+          const resp = await rpc('symbol_resolve', { module: l.module, offset_hex: l.offsetHex });
+          const data = (resp && resp.ok) ? resp.data : { ok: false };
+          if (data && data.ok && data.result) symbolCache.set(key, data.result);
+        }
+      } finally {
+        resolvingSymbols.value = false;
+        await refreshResolvedBacktrace();
+      }
+    }
+
+    async function loadSymbolList() {
+      const resp = await rpc('symbol_list', {});
+      const data = (resp && resp.ok) ? resp.data : { ok: false };
+      if (data && data.ok && Array.isArray(data.files)) symbolFiles.value = data.files;
+    }
+
+    async function uploadSymbol(e) {
+      const file = e.target.files[0];
+      if (!file) return;
+      const fd = new FormData();
+      fd.append('file', file);
+      await fetch('/api/symbol/upload', { method: 'POST', body: fd });
+      await loadSymbolList();
+      e.target.value = '';
     }
 
     function prevPage() {
@@ -654,6 +1018,32 @@ createApp({
 
     function showDetail(ev, idx) {
       detailEvent.value = ev;
+      refreshResolvedBacktrace();
+      const name = (ev && ev.name) ? String(ev.name).toLowerCase() : '';
+      if (name.includes('mmap') || name.includes('mprotect')) {
+        mapsPid.value = ev.pid || null;
+        mapsFocusAddr.value = ev.a0 || null;
+        tab.value = 'maps';
+        loadMaps();
+      }
+    }
+
+    function syscallClass(ev) {
+      const name = (ev.name || '').toLowerCase();
+      if (name.includes('ptrace') || name.includes('execve') || name.includes('clone')) return 'sc-proc';
+      if (name.includes('socket') || name.includes('connect') || name.includes('sendto') || name.includes('sendmsg') || name.includes('recvfrom') || name.includes('recvmsg')) return 'sc-net';
+      if (name.includes('openat') || name === 'open' || name.includes('read') || name.includes('write')) return 'sc-file';
+      if (name.includes('faccessat') || name.includes('uname')) return 'sc-env';
+      return '';
+    }
+
+    function syscallTag(ev) {
+      const c = syscallClass(ev);
+      if (c === 'sc-proc') return { text: 'PROC', cls: 'badge-proc' };
+      if (c === 'sc-net') return { text: 'NET', cls: 'badge-net' };
+      if (c === 'sc-file') return { text: 'FILE', cls: 'badge-file' };
+      if (c === 'sc-env') return { text: 'ENV', cls: 'badge-env' };
+      return null;
     }
 
     function parseBacktrace(ev) {
@@ -669,8 +1059,8 @@ createApp({
 
     // ─── PID Analysis ───
     async function loadPids() {
-      const resp = await fetch('/api/pids');
-      pids.value = await resp.json();
+      const resp = await rpc('get_pids', {});
+      pids.value = (resp && resp.ok) ? resp.data : [];
       filterPids();
     }
 
@@ -705,20 +1095,20 @@ createApp({
     const threadResult = ref(null);
     async function loadThreads() {
       if (!threadPid.value) return;
-      const resp = await fetch('/api/thread_analyze?pid=' + threadPid.value);
-      threadResult.value = await resp.json();
+      const resp = await rpc('thread_analyze', { pid: threadPid.value });
+      threadResult.value = (resp && resp.ok) ? resp.data : null;
     }
 
     async function loadPidEvents() {
-      const resp = await fetch('/api/pid/' + selectedPid.value + '/events?offset=' + pidEventsOffset.value + '&limit=200');
-      const data = await resp.json();
+      const resp = await rpc('pid_events', { pid: selectedPid.value, offset: pidEventsOffset.value, limit: 200 });
+      const data = (resp && resp.ok) ? resp.data : { events: [], total: 0 };
       pidEvents.value = data.events;
       pidEventsTotal.value = data.total;
     }
 
     async function renderPidTimeline() {
-      const resp = await fetch('/api/pid/' + selectedPid.value + '/timeline');
-      const data = await resp.json();
+      const resp = await rpc('pid_timeline', { pid: selectedPid.value });
+      const data = (resp && resp.ok) ? resp.data : [];
       const el = document.getElementById('pidTimelineChart');
       if (!el) return;
       const chart = echarts.init(el, 'dark');
@@ -920,7 +1310,10 @@ createApp({
       tab, bridgeConnected, stats,
       events, searchQuery, searchPid, searchTid, searchComm, searchNr, searchAntidebug, searchHasRetval,
       searchOffset, searchLimit, searchResult,
-      detailEvent, doSearch, resetSearch, prevPage, nextPage, filterByPid, showDetail, parseBacktrace,
+      detailEvent, resolvedBacktrace, resolvingSymbols,
+      doSearch, resetSearch, prevPage, nextPage, filterByPid, showDetail,
+      syscallClass, syscallTag, parseBacktrace,
+      refreshResolvedBacktrace, resolveSymbolsForBacktrace,
       pids, filteredPids, pidSearch, selectedPid, selectedPidComm, pidEvents, pidEventsOffset, pidEventsTotal,
       loadPids, filterPids, selectPid, loadPidEvents, openPidFromDetail,
       timelinePid, loadTimeline,
@@ -928,7 +1321,9 @@ createApp({
       uploadStatus, uploadFile, handleDrop,
       exportJsonl, exportCsv, clearAll, stopApp, clearApp, clearAppHistory,
       threadPid, threadResult, loadThreads,
-      mapsPid, mapsText, mapsErr, loadMaps,
+      mapsPid, mapsText, mapsErr, mapsEntries, mapsFilterPath, mapsFilterPerm, mapsFilterAddr, mapsFocusAddr,
+      loadMaps, renderMaps,
+      symbolFiles, loadSymbolList, uploadSymbol,
     };
   }
 }).mount('#app');
