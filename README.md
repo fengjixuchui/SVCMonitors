@@ -47,6 +47,27 @@ SVC_Call/
 - Maps/符号解析失败：需要 root 权限与可选的 `addr2line/llvm-addr2line`
 - App 看不到事件：确认模块已加载、App 已 enable、并已选择需要的 NR
 
-## 许可证
+## 使用截图
 
-GPL v2
+APP侧：
+
+![image-20260316225150355](./assets/image-20260316225150355.png)
+
+选择svc号
+
+![image-20260316225228741](./assets/image-20260316225228741.png)
+
+![image-20260316225247187](./assets/image-20260316225247187.png)
+
+
+
+web侧：
+
+![image-20260316225327922](./assets/image-20260316225327922.png)
+
+![image-20260316225342670](./assets/image-20260316225342670.png)
+
+![image-20260316225401372](./assets/image-20260316225401372.png)
+
+![image-20260316225434325](./assets/image-20260316225434325.png)
+
