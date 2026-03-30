@@ -1,0 +1,11 @@
+.DS_Store
+
+.build_tools/
+
+kpm/*.kpm
+kpm/*.o
+
+android/.gradle/
+android/**/build/
+
+SVC_PC_View/server/__pycache__/
