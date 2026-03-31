@@ -6,6 +6,8 @@ import java.nio.ByteOrder
 object BinEventParser {
     private const val MAGIC = 0x45435653
     private const val MAX_RECORD = 2048
+    private const val BT_V1_SLOTS = 7
+    private const val BT_V2_SLOTS = 16
 
     data class ParseResult(
         val events: List<StatusParser.SvcEvent>,
@@ -31,7 +33,7 @@ object BinEventParser {
 
             val bb = ByteBuffer.wrap(buf, off, len).order(ByteOrder.LITTLE_ENDIAN)
             bb.int
-            bb.short
+            val ver = bb.short.toInt() and 0xFFFF
             bb.short
             bb.int
             val seq = bb.int.toLong() and 0xFFFF_FFFFL
@@ -51,10 +53,11 @@ object BinEventParser {
             val a3 = bb.long
             val a4 = bb.long
             val a5 = bb.long
-            val btDepth = bb.int.coerceIn(0, 7)
+            val btSlots = if (ver >= 2) BT_V2_SLOTS else BT_V1_SLOTS
+            val btDepth = bb.int.coerceIn(0, btSlots)
             bb.int
             val bt = ArrayList<Long>(btDepth)
-            for (i in 0 until 7) {
+            for (i in 0 until btSlots) {
                 val v = bb.long
                 if (i < btDepth) bt.add(v)
             }

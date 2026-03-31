@@ -225,6 +225,7 @@ static const char *get_syscall_name(int nr)
  * ================================================================ */
 static volatile int g_enabled = 0;           // 监控开关，0=暂停，1=启用
 static volatile int g_target_uid = -1;       // UID 过滤，-1=全部，>=0=只监控指定 UID
+static volatile int g_bt_mode = 0;           // 0=accurate, 1=length
 static volatile unsigned long g_nr_bitmap[BITMAP_LONGS]; // 位图：哪些 syscall NR 要记录
 static volatile unsigned int g_seq = 0;      // 事件序列号（全局自增）
 static volatile unsigned int g_total = 0;    // 总事件计数
@@ -415,17 +416,22 @@ static unsigned int unwind_user_fp(struct pt_regs *r, unsigned long bt[MAX_BT])
         fp = next_fp;
     }
 
-    /* Step 3: Stack scan fallback — when FP chain is broken (e.g. -fomit-frame-pointer),
-     * scan the stack for values that look like valid .text return addresses.
-     * These are less reliable, so we mark them with bit0 set. */
-    if (d < MAX_BT && d <= 4 && g_copy_from_user) {
-        /* Only engage stack scan if FP chain gave very few results */
+    if (d < MAX_BT && g_copy_from_user) {
         unsigned long scan_sp = strip_ptr((unsigned long)r->sp);
         int scanned = 0;
         int scan_hits = 0;
+        int scan_cap = 0;
         unsigned long val;
+        if (g_bt_mode == 0) {
+            if (d > 4) return d;
+            scan_cap = 6;
+        } else {
+            scan_cap = (int)(MAX_BT - d);
+            if (scan_cap < 0) scan_cap = 0;
+            if (scan_cap > (int)MAX_BT) scan_cap = (int)MAX_BT;
+        }
 
-        while (d < MAX_BT && scanned < 128 && scan_hits < 6) {
+        while (d < MAX_BT && scanned < (g_bt_mode ? 256 : 128) && scan_hits < scan_cap) {
             int dup, k;
             if (!is_user_addr(scan_sp)) break;
             if (g_copy_from_user(&val, (const void __user *)scan_sp, 8) != 0) break;
@@ -2704,7 +2710,7 @@ static int format_event_bin(unsigned char *buf, int blen, const svc_event_t *ev)
     if (!buf || blen <= 0 || !ev) return 0;
 
     if (!put_u32(buf, blen, &off, 0x45435653U)) return 0;
-    if (!put_u16(buf, blen, &off, 1)) return 0;
+    if (!put_u16(buf, blen, &off, 2)) return 0;
     if (!put_u16(buf, blen, &off, 0)) return 0;
     if (!put_u32(buf, blen, &off, 0)) return 0;
 
@@ -2892,13 +2898,15 @@ static long svc_ctl0(const char *args, char *__user out_msg, int outlen)
             "\"target_uid\":%d,\"hooks_installed\":%d,"
             "\"nrs_logging\":%d,\"events_total\":%d,"
             "\"events_buffered\":%d,\"events_dropped\":%u,\"tier2\":%s,"
+            "\"bt_mode\":%d,"
             "\"logging_nrs\":[",
             g_enabled ? "true" : "false",
             g_target_uid, g_hooks_installed,
             nr_logging, g_total,
             g_ev_count < MAX_EVENTS ? g_ev_count : MAX_EVENTS,
             g_ev_dropped,
-            g_tier2_loaded ? "true" : "false");
+            g_tier2_loaded ? "true" : "false",
+            g_bt_mode);
 
         int first = 1;
         for (i = 0; i < MAX_NR; i++) {
@@ -2963,6 +2971,15 @@ static long svc_ctl0(const char *args, char *__user out_msg, int outlen)
     else if (!strncmp(args, "uid ", 4)) {
         g_target_uid = parse_int(args + 4, 0);
         n = snprintf(buf, blen, "{\"ok\":true,\"target_uid\":%d}", g_target_uid);
+    }
+
+    /* ---- bt_mode accurate|length|0|1 ---- */
+    else if (!strncmp(args, "bt_mode ", 8)) {
+        const char *m = args + 8;
+        if (!strcmp(m, "accurate") || !strcmp(m, "0")) g_bt_mode = 0;
+        else if (!strcmp(m, "length") || !strcmp(m, "1")) g_bt_mode = 1;
+        else g_bt_mode = parse_int(m, 0) ? 1 : 0;
+        n = snprintf(buf, blen, "{\"ok\":true,\"bt_mode\":%d}", g_bt_mode);
     }
 
     /* ---- enable ---- */

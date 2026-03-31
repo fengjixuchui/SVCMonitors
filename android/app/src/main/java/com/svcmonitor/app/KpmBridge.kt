@@ -210,6 +210,9 @@ object KpmBridge {
     /** Get syscall name table (0-459) */
     suspend fun sysnames() = execute("sysnames")
 
+    /** Backtrace mode: accurate|length */
+    suspend fun setBtMode(mode: String) = execute("bt_mode $mode")
+
     // ===== Filter control =====
 
     /** Set target UID (-1 for all) */

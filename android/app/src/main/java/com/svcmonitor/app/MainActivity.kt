@@ -153,6 +153,7 @@ class MainActivity : AppCompatActivity() {
         hideSystemApps = prefs.getBoolean("hide_system_apps", false)
         onlyLaunchableApps = prefs.getBoolean("only_launchable_apps", false)
         vm.doFilpOpenEnabled = prefs.getBoolean("do_filp_open", false)
+        vm.btLengthFirst = prefs.getBoolean("bt_length_first", false)
         historyLastSeq = prefs.getLong("history_last_seq", 0L)
         appList = loadVisibleApps(appSearchQuery)
 
@@ -1078,6 +1079,29 @@ class MainActivity : AppCompatActivity() {
         })
 
         col.addView(makeCard {
+            addView(makeLabel("回溯模式"))
+            addView(TextView(this@MainActivity).apply {
+                text = "准确率优先：只走 FP 链，少量栈扫描补帧\n长度优先：更积极栈扫描，回溯更长但可能有误报"
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+                setTextColor(cSecondary)
+            })
+            val sw = Switch(this@MainActivity).apply {
+                text = "长度优先"
+                isChecked = prefs.getBoolean("bt_length_first", false)
+                setOnCheckedChangeListener { _, checked ->
+                    prefs.edit().putBoolean("bt_length_first", checked).apply()
+                    vm.btLengthFirst = checked
+                    vm.setBtMode(checked)
+                }
+                layoutParams = LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT
+                ).apply { topMargin = dp(8) }
+            }
+            addView(sw)
+        })
+
+        col.addView(makeCard {
             addView(makeLabel("应用列表"))
             switchHideSystemApps = Switch(this@MainActivity).apply {
                 text = "隐藏系统应用"
@@ -1911,7 +1935,7 @@ class MainActivity : AppCompatActivity() {
                                     if (a == 0L) continue
                                     appendLine("#$idx ${formatAddrSoOffset(e.tgid, a)}")
                                     idx++
-                                    if (idx >= 7) break
+                                    if (idx >= 16) break
                                 }
                             }.trim()
                         } else {
@@ -1980,7 +2004,7 @@ class MainActivity : AppCompatActivity() {
         if (callerResolved.contains("(unmapped)")) return ""
         if (callerResolved.startsWith("[anon:")) return ""
 
-        val lines = ArrayList<String>(8)
+        val lines = ArrayList<String>(16)
         lines.add("#0 $callerResolved")
 
         fun stripPtr(v: Long): Long = v and 0x00FFFFFFFFFFFFFFL
@@ -1988,7 +2012,7 @@ class MainActivity : AppCompatActivity() {
         var fp = stripPtr(evt.fp)
         val seen = HashSet<Long>()
         var depth = 0
-        while (depth < 7) {
+        while (depth < 15) {
             if (!seen.add(fp)) break
             val words = KpmBridge.readProcMemQwords(evt.tgid, fp, 2)
             if (words.size < 2) break
@@ -2093,7 +2117,7 @@ class MainActivity : AppCompatActivity() {
                         val resolved = formatAddrSoOffset(evt.tgid, a)
                         appendLine("#$idx $resolved")
                         idx++
-                        if (idx >= 7) break
+                        if (idx >= 16) break
                     }
                 }.trim()
             } else {

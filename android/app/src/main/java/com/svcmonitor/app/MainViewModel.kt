@@ -62,6 +62,7 @@ class MainViewModel : ViewModel() {
 
     var selectedApp: AppInfo? = null
     var selectedPreset: String = ""
+    var btLengthFirst: Boolean = false
 
     // ===== Polling =====
     private var pollingJob: Job? = null
@@ -265,6 +266,9 @@ class MainViewModel : ViewModel() {
                 val rFilp = KpmBridge.setDoFilpOpen(doFilpOpenEnabled)
                 Log.i(TAG, "do_filp_open result: success=${rFilp.success} output=${rFilp.output.take(200)} error=${rFilp.error}")
 
+                val rBt = KpmBridge.setBtMode(if (btLengthFirst) "length" else "accurate")
+                Log.i(TAG, "bt_mode result: success=${rBt.success} output=${rBt.output.take(200)} error=${rBt.error}")
+
                 // Step 2: Enable monitoring — this is the critical step
                 val r3 = KpmBridge.enable()
                 Log.i(TAG, "enable result: success=${r3.success} output=${r3.output.take(200)} error=${r3.error}")
@@ -311,6 +315,9 @@ class MainViewModel : ViewModel() {
 
                 val rFilp = KpmBridge.setDoFilpOpen(doFilpOpenEnabled)
                 Log.i(TAG, "do_filp_open result: success=${rFilp.success} output=${rFilp.output.take(200)} error=${rFilp.error}")
+
+                val rBt = KpmBridge.setBtMode(if (btLengthFirst) "length" else "accurate")
+                Log.i(TAG, "bt_mode result: success=${rBt.success} output=${rBt.output.take(200)} error=${rBt.error}")
 
                 val r3 = KpmBridge.enable()
                 Log.i(TAG, "enable result: ${r3.success} ${r3.output.take(100)}")
@@ -361,6 +368,24 @@ class MainViewModel : ViewModel() {
                     _toast.postValue(if (enabled) "do_filp_open 已开启" else "do_filp_open 已关闭")
                 } else {
                     _toast.postValue("设置 do_filp_open 失败: ${r.error}")
+                }
+            } finally {
+                pollingPaused = false
+                pollOnce()
+            }
+        }
+    }
+
+    fun setBtMode(lengthFirst: Boolean) {
+        viewModelScope.launch {
+            pollingPaused = true
+            try {
+                val mode = if (lengthFirst) "length" else "accurate"
+                val r = KpmBridge.setBtMode(mode)
+                if (r.success) {
+                    _toast.postValue(if (lengthFirst) "回溯模式：长度优先" else "回溯模式：准确率优先")
+                } else {
+                    _toast.postValue("设置回溯模式失败: ${r.error}")
                 }
             } finally {
                 pollingPaused = false

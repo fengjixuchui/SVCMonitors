@@ -36,13 +36,17 @@ echo -e "${GREEN}====================================================${NC}"
 echo ""
 
 echo -e "${YELLOW}!!! 需要你改的路径（很重要） !!!${NC}"
-KP_DIR="${KP_DIR:-/path/to/KernelPatch}"
-ANDROID_SDK="${ANDROID_SDK:-/Users/bytedance/Library/Android/sdk}"
+KP_DIR_DEFAULT="$SCRIPT_DIR/KernelPatch"
+ANDROID_SDK_DEFAULT="${HOME}/Library/Android/sdk"
+if [ ! -d "$ANDROID_SDK_DEFAULT" ]; then ANDROID_SDK_DEFAULT="/Users/bytedance/Library/Android/sdk"; fi
+
+KP_DIR="${KP_DIR:-$KP_DIR_DEFAULT}"
+ANDROID_SDK="${ANDROID_SDK:-$ANDROID_SDK_DEFAULT}"
 echo "  KP_DIR      = $KP_DIR"
 echo "  ANDROID_SDK = $ANDROID_SDK"
 echo ""
 
-if [ "$KP_DIR" = "/path/to/KernelPatch" ] || [ ! -d "$KP_DIR" ]; then
+if [ ! -d "$KP_DIR" ]; then
   echo -e "${RED}[ERROR]${NC} KP_DIR 未配置或目录不存在：$KP_DIR"
   echo "请把 build.sh 顶部的 KP_DIR 改成你的 KernelPatch 源码路径，或导出环境变量："
   echo "  export KP_DIR=/abs/path/to/KernelPatch"
@@ -55,29 +59,99 @@ if [ ! -d "$ANDROID_SDK" ]; then
   exit 1
 fi
 
+TOOLS_DIR="$SCRIPT_DIR/.build_tools"
+mkdir -p "$TOOLS_DIR"
+
 if [ -z "${JAVA_HOME:-}" ]; then
   if command -v /usr/libexec/java_home >/dev/null 2>&1; then
     JAVA_HOME="$(/usr/libexec/java_home -v 17 2>/dev/null || true)"
     export JAVA_HOME
   fi
 fi
+
+JAVA_MAJOR=""
+if [ -n "${JAVA_HOME:-}" ] && [ -x "$JAVA_HOME/bin/java" ]; then
+  JAVA_LINE="$("$JAVA_HOME/bin/java" -version 2>&1 | head -n 1)"
+  if [[ "$JAVA_LINE" =~ \"([0-9]+)\. ]]; then
+    JAVA_MAJOR="${BASH_REMATCH[1]}"
+  elif [[ "$JAVA_LINE" =~ \"([0-9]+)\" ]]; then
+    JAVA_MAJOR="${BASH_REMATCH[1]}"
+  fi
+fi
+
 if [ -z "${JAVA_HOME:-}" ] || [ ! -d "$JAVA_HOME" ]; then
-  echo -e "${RED}[ERROR]${NC} 未找到 JDK 17（JAVA_HOME 为空或不存在）"
-  echo "请安装 JDK 17 并导出："
-  echo "  export JAVA_HOME=/path/to/jdk17/Contents/Home"
-  exit 1
+  echo -e "${YELLOW}[INFO]${NC} 未检测到 JDK 17，自动使用/下载 Temurin 17 到 $TOOLS_DIR"
+  OS="$(uname -s)"
+  ARCH="$(uname -m)"
+  if [ "$OS" = "Darwin" ]; then
+    if [ "$ARCH" = "arm64" ]; then
+      JDK_URL="https://api.adoptium.net/v3/binary/latest/17/ga/mac/aarch64/jdk/hotspot/normal/eclipse"
+    else
+      JDK_URL="https://api.adoptium.net/v3/binary/latest/17/ga/mac/x64/jdk/hotspot/normal/eclipse"
+    fi
+  else
+    echo -e "${RED}[ERROR]${NC} 未找到 JDK 17，且暂不支持自动下载到该系统：$OS"
+    echo "请安装 JDK 17 并导出："
+    echo "  export JAVA_HOME=/path/to/jdk17"
+    exit 1
+  fi
+
+  JDK_TGZ="$TOOLS_DIR/temurin17.tar.gz"
+  JDK_EXTRACT="$TOOLS_DIR/temurin17"
+  mkdir -p "$JDK_EXTRACT"
+  JAVA_HOME="$(find "$JDK_EXTRACT" -type f -path "*/Contents/Home/bin/java" -print 2>/dev/null | head -n 1 | sed 's#/bin/java##')"
+  if [ -z "${JAVA_HOME:-}" ] || [ ! -d "$JAVA_HOME" ]; then
+    if [ ! -f "$JDK_TGZ" ]; then
+      curl -L -o "$JDK_TGZ" "$JDK_URL"
+    fi
+    rm -rf "$JDK_EXTRACT"/*
+    tar -xzf "$JDK_TGZ" -C "$JDK_EXTRACT"
+    JAVA_HOME="$(find "$JDK_EXTRACT" -type f -path "*/Contents/Home/bin/java" -print 2>/dev/null | head -n 1 | sed 's#/bin/java##')"
+    if [ -z "${JAVA_HOME:-}" ] || [ ! -d "$JAVA_HOME" ]; then
+      echo -e "${RED}[ERROR]${NC} 自动下载 JDK 失败，请手动设置 JAVA_HOME"
+      exit 1
+    fi
+  fi
+  export JAVA_HOME
+elif [ "$JAVA_MAJOR" != "17" ]; then
+  echo -e "${YELLOW}[INFO]${NC} 当前 JAVA_HOME 不是 JDK17（检测到: ${JAVA_LINE}），自动切换到 Temurin 17"
+  unset JAVA_HOME
+  OS="$(uname -s)"
+  ARCH="$(uname -m)"
+  if [ "$OS" = "Darwin" ]; then
+    if [ "$ARCH" = "arm64" ]; then
+      JDK_URL="https://api.adoptium.net/v3/binary/latest/17/ga/mac/aarch64/jdk/hotspot/normal/eclipse"
+    else
+      JDK_URL="https://api.adoptium.net/v3/binary/latest/17/ga/mac/x64/jdk/hotspot/normal/eclipse"
+    fi
+  else
+    echo -e "${RED}[ERROR]${NC} 需要 JDK 17，且暂不支持自动下载到该系统：$OS"
+    exit 1
+  fi
+  JDK_TGZ="$TOOLS_DIR/temurin17.tar.gz"
+  JDK_EXTRACT="$TOOLS_DIR/temurin17"
+  mkdir -p "$JDK_EXTRACT"
+  JAVA_HOME="$(find "$JDK_EXTRACT" -type f -path "*/Contents/Home/bin/java" -print 2>/dev/null | head -n 1 | sed 's#/bin/java##')"
+  if [ -z "${JAVA_HOME:-}" ] || [ ! -d "$JAVA_HOME" ]; then
+    curl -L -o "$JDK_TGZ" "$JDK_URL"
+    rm -rf "$JDK_EXTRACT"/*
+    tar -xzf "$JDK_TGZ" -C "$JDK_EXTRACT"
+    JAVA_HOME="$(find "$JDK_EXTRACT" -type f -path "*/Contents/Home/bin/java" -print 2>/dev/null | head -n 1 | sed 's#/bin/java##')"
+    if [ -z "${JAVA_HOME:-}" ] || [ ! -d "$JAVA_HOME" ]; then
+      echo -e "${RED}[ERROR]${NC} 自动下载 JDK 失败，请手动设置 JAVA_HOME"
+      exit 1
+    fi
+  fi
+  export JAVA_HOME
 fi
 export PATH="$JAVA_HOME/bin:$PATH"
 
 export ANDROID_HOME="$ANDROID_SDK"
 export ANDROID_SDK_ROOT="$ANDROID_SDK"
 
-TOOLS_DIR="$SCRIPT_DIR/.build_tools"
 GRADLE_VERSION="${GRADLE_VERSION:-8.1.1}"
 GRADLE_DIR="$TOOLS_DIR/gradle-$GRADLE_VERSION"
 GRADLE_BIN="${GRADLE_BIN:-$GRADLE_DIR/bin/gradle}"
-
-mkdir -p "$TOOLS_DIR"
 
 if [ ! -x "$GRADLE_BIN" ]; then
   echo -e "${YELLOW}[INFO]${NC} 未找到 Gradle，自动下载：$GRADLE_VERSION"
