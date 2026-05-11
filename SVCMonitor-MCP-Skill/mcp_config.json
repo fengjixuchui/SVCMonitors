@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "svc-monitor": {
+      "command": "python3",
+      "args": ["svc_monitor_mcp.py"],
+      "cwd": "/Users/bytedance/Desktop/GithubProject/KernelModules/SVCMonitor/SVCMonitor-MCP-Skill",
+      "env": {
+        "KPATCH_KEY": "XiaoLu0129"
+      }
+    }
+  }
+}

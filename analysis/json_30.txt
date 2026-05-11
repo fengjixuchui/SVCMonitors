@@ -1,0 +1,32 @@
+[34m═══ 事件 (30/30) ═══[0m
+[34mprctl(167)[0m | [2mTID=29589 TGID=29589[0m | [35msh[0m | [2mpc=0x7ab7f31df8[0m | [2mret=0[0m | [32moption=1398164801 arg2=0x0 arg3=0x7ab6d2d000[0m
+[34mmmap(222)[0m | [2mTID=29589 TGID=29589[0m | [35msh[0m | [2mpc=0x7ab7f32638[0m | [2mret=0[0m | [32maddr=0x0 len=4096 prot= PROT_READ |PROT_WRITE(0x3) flags= MAP_PRIVATE |MAP_ANONYMOUS(0x22) fd=-1 offset=0x0[0m
+[34mprctl(167)[0m | [2mTID=29589 TGID=29589[0m | [35msh[0m | [2mpc=0x7ab7f31df8[0m | [2mret=0[0m | [32moption=1398164801 arg2=0x0 arg3=0x7ab6d2f000[0m
+[34mmmap(222)[0m | [2mTID=29589 TGID=29589[0m | [35msh[0m | [2mpc=0x7ab7f32638[0m | [2mret=0[0m | [32maddr=0x0 len=4096 prot= PROT_READ |PROT_WRITE(0x3) flags= MAP_PRIVATE |MAP_ANONYMOUS(0x22) fd=-1 offset=0x0[0m
+[34mprctl(167)[0m | [2mTID=29589 TGID=29589[0m | [35msh[0m | [2mpc=0x7ab7f31df8[0m | [2mret=0[0m | [32moption=1398164801 arg2=0x0 arg3=0x7ab6d2c000[0m
+[34mmmap(222)[0m | [2mTID=29589 TGID=29589[0m | [35msh[0m | [2mpc=0x7ab7f32638[0m | [2mret=0[0m | [32maddr=0x0 len=4096 prot= PROT_READ |PROT_WRITE(0x3) flags= MAP_PRIVATE |MAP_ANONYMOUS(0x22) fd=-1 offset=0x0[0m
+[34mprctl(167)[0m | [2mTID=29589 TGID=29589[0m | [35msh[0m | [2mpc=0x7ab7f31df8[0m | [2mret=0[0m | [32moption=1398164801 arg2=0x0 arg3=0x7ab6d2b000[0m
+[34mmmap(222)[0m | [2mTID=29589 TGID=29589[0m | [35msh[0m | [2mpc=0x7ab7f32638[0m | [2mret=0[0m | [32maddr=0x0 len=4096 prot= PROT_READ |PROT_WRITE(0x3) flags= MAP_PRIVATE |MAP_ANONYMOUS(0x22) fd=-1 offset=0x0[0m
+[34mprctl(167)[0m | [2mTID=29589 TGID=29589[0m | [35msh[0m | [2mpc=0x7ab7f31df8[0m | [2mret=0[0m | [32moption=1398164801 arg2=0x0 arg3=0x7ab6d2a000[0m
+[34mmmap(222)[0m | [2mTID=29589 TGID=29589[0m | [35msh[0m | [2mpc=0x7ab7f32638[0m | [2mret=0[0m | [32maddr=0x0 len=4096 prot= PROT_READ |PROT_WRITE(0x3) flags= MAP_PRIVATE |MAP_ANONYMOUS(0x22) fd=-1 offset=0x0[0m
+[34mprctl(167)[0m | [2mTID=29589 TGID=29589[0m | [35msh[0m | [2mpc=0x7ab7f31df8[0m | [2mret=0[0m | [32moption=1398164801 arg2=0x0 arg3=0x7ab6d29000[0m
+[34mmmap(222)[0m | [2mTID=29589 TGID=29589[0m | [35msh[0m | [2mpc=0x7ab7f32638[0m | [2mret=0[0m | [32maddr=0x0 len=4096 prot= PROT_READ |PROT_WRITE(0x3) flags= MAP_PRIVATE |MAP_ANONYMOUS(0x22) fd=-1 offset=0x0[0m
+[34mprctl(167)[0m | [2mTID=29589 TGID=29589[0m | [35msh[0m | [2mpc=0x7ab7f31df8[0m | [2mret=0[0m | [32moption=1398164801 arg2=0x0 arg3=0x7ab6d28000[0m
+[34mmmap(222)[0m | [2mTID=29589 TGID=29589[0m | [35msh[0m | [2mpc=0x7ab7f32638[0m | [2mret=0[0m | [32maddr=0x0 len=4096 prot= PROT_READ |PROT_WRITE(0x3) flags= MAP_PRIVATE |MAP_ANONYMOUS(0x22) fd=-1 offset=0x0[0m
+[34mprctl(167)[0m | [2mTID=29589 TGID=29589[0m | [35msh[0m | [2mpc=0x7ab7f31df8[0m | [2mret=0[0m | [32moption=1398164801 arg2=0x0 arg3=0x7ab6d27000[0m
+[34mmmap(222)[0m | [2mTID=29589 TGID=29589[0m | [35msh[0m | [2mpc=0x7ab7f32638[0m | [2mret=0[0m | [32maddr=0x0 len=4096 prot= PROT_READ |PROT_WRITE(0x3) flags= MAP_PRIVATE |MAP_ANONYMOUS(0x22) fd=-1 offset=0x0[0m
+[34mprctl(167)[0m | [2mTID=29589 TGID=29589[0m | [35msh[0m | [2mpc=0x7ab7f31df8[0m | [2mret=0[0m | [32moption=1398164801 arg2=0x0 arg3=0x7ab6d26000[0m
+[34mmmap(222)[0m | [2mTID=29589 TGID=29589[0m | [35msh[0m | [2mpc=0x7ab7f32638[0m | [2mret=0[0m | [32maddr=0x0 len=4096 prot= PROT_READ |PROT_WRITE(0x3) flags= MAP_PRIVATE |MAP_ANONYMOUS(0x22) fd=-1 offset=0x0[0m
+[34mprctl(167)[0m | [2mTID=29589 TGID=29589[0m | [35msh[0m | [2mpc=0x7ab7f31df8[0m | [2mret=0[0m | [32moption=1398164801 arg2=0x0 arg3=0x7ab6d25000[0m
+[34mmmap(222)[0m | [2mTID=29589 TGID=29589[0m | [35msh[0m | [2mpc=0x7ab7f32638[0m | [2mret=0[0m | [32maddr=0x0 len=4096 prot= PROT_READ |PROT_WRITE(0x3) flags= MAP_PRIVATE |MAP_ANONYMOUS(0x22) fd=-1 offset=0x0[0m
+[34mprctl(167)[0m | [2mTID=29589 TGID=29589[0m | [35msh[0m | [2mpc=0x7ab7f31df8[0m | [2mret=0[0m | [32moption=1398164801 arg2=0x0 arg3=0x7ab6d24000[0m
+[34mmmap(222)[0m | [2mTID=29589 TGID=29589[0m | [35msh[0m | [2mpc=0x7ab7f32638[0m | [2mret=0[0m | [32maddr=0x0 len=4096 prot= PROT_READ |PROT_WRITE(0x3) flags= MAP_PRIVATE |MAP_ANONYMOUS(0x22) fd=-1 offset=0x0[0m
+[34mprctl(167)[0m | [2mTID=29589 TGID=29589[0m | [35msh[0m | [2mpc=0x7ab7f31df8[0m | [2mret=0[0m | [32moption=1398164801 arg2=0x0 arg3=0x7ab6d23000[0m
+[34mmmap(222)[0m | [2mTID=29589 TGID=29589[0m | [35msh[0m | [2mpc=0x7ab7f32638[0m | [2mret=0[0m | [32maddr=0x0 len=4096 prot= PROT_READ |PROT_WRITE(0x3) flags= MAP_PRIVATE |MAP_ANONYMOUS(0x22) fd=-1 offset=0x0[0m
+[34mprctl(167)[0m | [2mTID=29589 TGID=29589[0m | [35msh[0m | [2mpc=0x7ab7f31df8[0m | [2mret=0[0m | [32moption=1398164801 arg2=0x0 arg3=0x7ab6d22000[0m
+[34mmmap(222)[0m | [2mTID=29589 TGID=29589[0m | [35msh[0m | [2mpc=0x7ab7f32638[0m | [2mret=0[0m | [32maddr=0x0 len=4096 prot= PROT_READ |PROT_WRITE(0x3) flags= MAP_PRIVATE |MAP_ANONYMOUS(0x22) fd=-1 offset=0x0[0m
+[34mprctl(167)[0m | [2mTID=29589 TGID=29589[0m | [35msh[0m | [2mpc=0x7ab7f31df8[0m | [2mret=0[0m | [32moption=1398164801 arg2=0x0 arg3=0x7ab6d21000[0m
+[34mmmap(222)[0m | [2mTID=29589 TGID=29589[0m | [35msh[0m | [2mpc=0x7ab7f32638[0m | [2mret=0[0m | [32maddr=0x0 len=4096 prot= PROT_READ |PROT_WRITE(0x3) flags= MAP_PRIVATE |MAP_ANONYMOUS(0x22) fd=-1 offset=0x0[0m
+[34mprctl(167)[0m | [2mTID=29589 TGID=29589[0m | [35msh[0m | [2mpc=0x7ab7f31df8[0m | [2mret=0[0m | [32moption=1398164801 arg2=0x0 arg3=0x7ab6d20000[0m
+[34mmmap(222)[0m | [2mTID=29589 TGID=29589[0m | [35msh[0m | [2mpc=0x7ab7f32638[0m | [2mret=0[0m | [32maddr=0x0 len=4096 prot= PROT_READ |PROT_WRITE(0x3) flags= MAP_PRIVATE |MAP_ANONYMOUS(0x22) fd=-1 offset=0x0[0m
+[2m── 共 30 条[0m

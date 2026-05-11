@@ -1,0 +1,7 @@
+[34m═══ 事件 (5/5) ═══[0m
+[34mmprotect(226)[0m | [2mTID=29823 TGID=29823[0m | [35mstat[0m | [2mpc=0x7cc797f098[0m | [2mret=0[0m | [32maddr=0x7cc670c000 len=393216 prot= PROT_READ(0x1)[0m
+[34mmprotect(226)[0m | [2mTID=29823 TGID=29823[0m | [35mstat[0m | [2mpc=0x7cc797f098[0m | [2mret=0[0m | [32maddr=0x7cc66ac000 len=393216 prot= PROT_READ(0x1)[0m
+[34mrt_sigaction(134)[0m | [2mTID=29823 TGID=29823[0m | [35mstat[0m | [2mpc=0x7cc29ce6c8[0m | [2mret=0[0m | [32msig=SIGPIPE(13) act=0x7ffbcb52d0 oact=0x7ffbcb52b0[0m
+[34mmmap(222)[0m | [2mTID=29823 TGID=29823[0m | [35mstat[0m | [2mpc=0x7cc29ce1e8[0m | [2mret=0[0m | [32maddr=0x7be28ac000 len=262144 prot= PROT_READ |PROT_WRITE(0x3) flags= MAP_PRIVATE |MAP_FIXED |MAP_ANONYMOUS(0x32) fd=-1 o[0m
+[34mprctl(167)[0m | [2mTID=29823 TGID=29823[0m | [35mstat[0m | [2mpc=0x7cc29cd9a8[0m | [2mret=0[0m | [32moption=1398164801 arg2=0x0 arg3=0x7be28ac000[0m
+[2m── 共 5 条[0m

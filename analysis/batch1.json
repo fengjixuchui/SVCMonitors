@@ -1,0 +1,102 @@
+[34m═══ 事件 (100/100) ═══[0m
+[34mioctl(29)[0m | [2mTID=566 TGID=566[0m | [35msurfaceflinger[0m | [2mpc=0x7945166d68[0m | [2mret=0[0m | [32mfd=673 cmd=0xc0383e04 dir=3 type='>' nr=4 size=56 arg=0x7fd217ff80[0m
+[34mioctl(29)[0m | [2mTID=566 TGID=566[0m | [35msurfaceflinger[0m | [2mpc=0x7945166d68[0m | [2mret=0[0m | [32mfd=673 cmd=0xc0383e04 dir=3 type='>' nr=4 size=56 arg=0xb4000077f50153b0[0m
+[34mioctl(29)[0m | [2mTID=566 TGID=566[0m | [35msurfaceflinger[0m | [2mpc=0x7945166d68[0m | [2mret=0[0m | [32mfd=183 cmd=0xc0383e04 dir=3 type='>' nr=4 size=56 arg=0x7fd217f110[0m
+[34mioctl(29)[0m | [2mTID=566 TGID=566[0m | [35msurfaceflinger[0m | [2mpc=0x7945166d68[0m | [2mret=0[0m | [32mfd=183 cmd=0xc0383e04 dir=3 type='>' nr=4 size=56 arg=0xb4000077f50153b0[0m
+[34mioctl(29)[0m | [2mTID=566 TGID=566[0m | [35msurfaceflinger[0m | [2mpc=0x7945166d68[0m | [2mret=0[0m | [32mfd=5 cmd=BINDER_WRITE_READ(0xc0306201) arg=0x7fd217f4e8[0m
+[34mioctl(29)[0m | [2mTID=566 TGID=566[0m | [35msurfaceflinger[0m | [2mpc=0x7945166d68[0m | [2mret=0[0m | [32mfd=5 cmd=BINDER_WRITE_READ(0xc0306201) arg=0x7fd217f4f8[0m
+[34mioctl(29)[0m | [2mTID=15494 TGID=15063[0m | [35mbinder:15063_5[0m | [2mpc=0x737595dd68[0m | [2mret=0[0m | [32mfd=78 cmd=BINDER_WRITE_READ(0xc0306201) arg=0x708c572588[0m
+[34mioctl(29)[0m | [2mTID=566 TGID=566[0m | [35msurfaceflinger[0m | [2mpc=0x7945166d68[0m | [2mret=0[0m | [32mfd=3 cmd=BINDER_WRITE_READ(0xc0306201) arg=0x7fd217ef80[0m
+[34mioctl(29)[0m | [2mTID=566 TGID=566[0m | [35msurfaceflinger[0m | [2mpc=0x7945166d68[0m | [2mret=0[0m | [32mfd=3 cmd=BINDER_WRITE_READ(0xc0306201) arg=0x7fd217ef80[0m
+[34mioctl(29)[0m | [2mTID=626 TGID=568[0m | [35mHwBinder:568_1[0m | [2mpc=0x7e4e376d68[0m | [2mret=0[0m | [32mfd=24 cmd=0xc0203e0a dir=3 type='>' nr=10 size=32 arg=0x7bb75a9c30[0m
+[34mioctl(29)[0m | [2mTID=626 TGID=568[0m | [35mHwBinder:568_1[0m | [2mpc=0x7e4e376d68[0m | [2mret=0[0m | [32mfd=34 cmd=0xc0203e0a dir=3 type='>' nr=10 size=32 arg=0x7bb75a9c30[0m
+[34mioctl(29)[0m | [2mTID=626 TGID=568[0m | [35mHwBinder:568_1[0m | [2mpc=0x7e4e376d68[0m | [2mret=0[0m | [32mfd=15 cmd=0xc01064bd dir=3 type='d' nr=189 size=16 arg=0x7b9a095908[0m
+[34mioctl(29)[0m | [2mTID=626 TGID=568[0m | [35mHwBinder:568_1[0m | [2mpc=0x7e4e376d68[0m | [2mret=0[0m | [32mfd=15 cmd=0xc00464be dir=3 type='d' nr=190 size=4 arg=0x7b9a095974[0m
+[34mioctl(29)[0m | [2mTID=626 TGID=568[0m | [35mHwBinder:568_1[0m | [2mpc=0x7e4e376d68[0m | [2mret=0[0m | [32mfd=15 cmd=0xc01064bd dir=3 type='d' nr=189 size=16 arg=0x7b9a095908[0m
+[34mioctl(29)[0m | [2mTID=626 TGID=568[0m | [35mHwBinder:568_1[0m | [2mpc=0x7e4e376d68[0m | [2mret=0[0m | [32mfd=15 cmd=0xc00464be dir=3 type='d' nr=190 size=4 arg=0x7b9a095974[0m
+[34mioctl(29)[0m | [2mTID=626 TGID=568[0m | [35mHwBinder:568_1[0m | [2mpc=0x7e4e376d68[0m | [2mret=0[0m | [32mfd=15 cmd=0xc03864bc dir=3 type='d' nr=188 size=56 arg=0x7b9a095970[0m
+[34mioctl(29)[0m | [2mTID=611 TGID=568[0m | [35mDisplayHints[0m | [2mpc=0x7e4e376d68[0m | [2mret=0[0m | [32mfd=20 cmd=BINDER_WRITE_READ(0xc0306201) arg=0x7ba78357f0[0m
+[34mioctl(29)[0m | [2mTID=626 TGID=568[0m | [35mHwBinder:568_1[0m | [2mpc=0x7e4e376d68[0m | [2mret=0[0m | [32mfd=21 cmd=0xc0203e0a dir=3 type='>' nr=10 size=32 arg=0x7bb75a9c90[0m
+[34mioctl(29)[0m | [2mTID=626 TGID=568[0m | [35mHwBinder:568_1[0m | [2mpc=0x7e4e376d68[0m | [2mret=0[0m | [32mfd=36 cmd=0xc0203e0a dir=3 type='>' nr=10 size=32 arg=0x7bb75a9a50[0m
+[34mioctl(29)[0m | [2mTID=626 TGID=568[0m | [35mHwBinder:568_1[0m | [2mpc=0x7e4e376d68[0m | [2mret=0[0m | [32mfd=39 cmd=0xc0203e0a dir=3 type='>' nr=10 size=32 arg=0x7bb75a9a50[0m
+[34mioctl(29)[0m | [2mTID=626 TGID=568[0m | [35mHwBinder:568_1[0m | [2mpc=0x7e4e376d68[0m | [2mret=0[0m | [32mfd=4 cmd=BINDER_WRITE_READ(0xc0306201) arg=0x7b9a0988a0[0m
+[34mioctl(29)[0m | [2mTID=626 TGID=568[0m | [35mHwBinder:568_1[0m | [2mpc=0x7e4e376d68[0m | [2mret=0[0m | [32mfd=4 cmd=BINDER_WRITE_READ(0xc0306201) arg=0x7b9a0999b0[0m
+[34mioctl(29)[0m | [2mTID=626 TGID=568[0m | [35mHwBinder:568_1[0m | [2mpc=0x7e4e376d68[0m | [2mret=0[0m | [32mfd=4 cmd=BINDER_WRITE_READ(0xc0306201) arg=0x7b9a0999b0[0m
+[34mioctl(29)[0m | [2mTID=653 TGID=653[0m | [35mandroid.hardwar[0m | [2mpc=0x7e702cbd68[0m | [2mret=0[0m | [32mfd=4 cmd=BINDER_WRITE_READ(0xc0306201) arg=0x7ff0f46568[0m
+[34mioctl(29)[0m | [2mTID=566 TGID=566[0m | [35msurfaceflinger[0m | [2mpc=0x7945166d68[0m | [2mret=0[0m | [32mfd=5 cmd=BINDER_WRITE_READ(0xc0306201) arg=0x7fd217f890[0m
+[34mioctl(29)[0m | [2mTID=566 TGID=566[0m | [35msurfaceflinger[0m | [2mpc=0x7945166d68[0m | [2mret=0[0m | [32mfd=669 cmd=0xc0383e04 dir=3 type='>' nr=4 size=56 arg=0x7fd217f980[0m
+[34mioctl(29)[0m | [2mTID=566 TGID=566[0m | [35msurfaceflinger[0m | [2mpc=0x7945166d68[0m | [2mret=0[0m | [32mfd=669 cmd=0xc0383e04 dir=3 type='>' nr=4 size=56 arg=0xb4000077f5009e30[0m
+[34mioctl(29)[0m | [2mTID=653 TGID=653[0m | [35mandroid.hardwar[0m | [2mpc=0x7e702cbd68[0m | [2mret=0[0m | [32mfd=4 cmd=BINDER_WRITE_READ(0xc0306201) arg=0x7ff0f46568[0m
+[34mioctl(29)[0m | [2mTID=672 TGID=566[0m | [35msurfaceflinger[0m | [2mpc=0x7945166d68[0m | [2mret=0[0m | [32mfd=5 cmd=BINDER_WRITE_READ(0xc0306201) arg=0x7692ca3310[0m
+[34mioctl(29)[0m | [2mTID=15494 TGID=15063[0m | [35mbinder:15063_5[0m | [2mpc=0x737595dd68[0m | [2mret=0[0m | [32mfd=477 cmd=0xc0303e03 dir=3 type='>' nr=3 size=48 arg=0x708c571ae0[0m
+[34mioctl(29)[0m | [2mTID=15494 TGID=15063[0m | [35mbinder:15063_5[0m | [2mpc=0x737595dd68[0m | [2mret=0[0m | [32mfd=78 cmd=BINDER_WRITE_READ(0xc0306201) arg=0x708c572588[0m
+[34mopenat(56)[0m | [2mTID=3025 TGID=653[0m | [35mNodeLooperThrea[0m | [2mpc=0x7e702cbfc8[0m | [2mret=0[0m | [32mdirfd=-100   path="/proc/vendor_sched/groups/fg/prefer_idle"   flags=O_WRONLY |O_TRUNC(0x80201)   mode=00[0m
+[34mdo_filp_open(-1)[0m | [2mTID=3025 TGID=653[0m | [35mNodeLooperThrea[0m | [2mpc=0x7e702cbfc8[0m | [2mret=0[0m | [32mdfd=-100 filename=0xffffff8007487000 open_flags=0xffffffc0183dbce0[0m
+[34mioctl(29)[0m | [2mTID=625 TGID=566[0m | [35mRenderEngine[0m | [2mpc=0x7945166d68[0m | [2mret=0[0m | [32mfd=10 cmd=0x40048019 dir=1 type='�' nr=25 size=4 arg=0x76b1192294[0m
+[34mioctl(29)[0m | [2mTID=625 TGID=566[0m | [35mRenderEngine[0m | [2mpc=0x7945166d68[0m | [2mret=0[0m | [32mfd=10 cmd=0x40048019 dir=1 type='�' nr=25 size=4 arg=0x76b1192214[0m
+[34mioctl(29)[0m | [2mTID=625 TGID=566[0m | [35mRenderEngine[0m | [2mpc=0x7945166d68[0m | [2mret=0[0m | [32mfd=10 cmd=0x40108002 dir=1 type='�' nr=2 size=16 arg=0x76b1192008[0m
+[34mioctl(29)[0m | [2mTID=625 TGID=566[0m | [35mRenderEngine[0m | [2mpc=0x7945166d68[0m | [2mret=0[0m | [32mfd=10 cmd=0x40108002 dir=1 type='�' nr=2 size=16 arg=0x76b1192078[0m
+[34mioctl(29)[0m | [2mTID=625 TGID=566[0m | [35mRenderEngine[0m | [2mpc=0x7945166d68[0m | [2mret=0[0m | [32mfd=10 cmd=0xc0208005 dir=3 type='�' nr=5 size=32 arg=0x76b118fd58[0m
+[34mmmap(222)[0m | [2mTID=625 TGID=566[0m | [35mRenderEngine[0m | [2mpc=0x79451671e8[0m | [2mret=0[0m | [32maddr=0x0 len=131072 prot= PROT_READ |PROT_WRITE(0x3) flags= MAP_SHARED(0x1) fd=10 offset=0x41000[0m
+[34mioctl(29)[0m | [2mTID=625 TGID=566[0m | [35mRenderEngine[0m | [2mpc=0x7945166d68[0m | [2mret=0[0m | [32mfd=10 cmd=0x40048042 dir=1 type='�' nr=66 size=4 arg=0x76b11903d4[0m
+[34mioctl(29)[0m | [2mTID=625 TGID=566[0m | [35mRenderEngine[0m | [2mpc=0x7945166d68[0m | [2mret=0[0m | [32mfd=10 cmd=0xc0208005 dir=3 type='�' nr=5 size=32 arg=0x76b118fff8[0m
+[34mmmap(222)[0m | [2mTID=625 TGID=566[0m | [35mRenderEngine[0m | [2mpc=0x79451671e8[0m | [2mret=0[0m | [32maddr=0x0 len=4096 prot= PROT_READ |PROT_WRITE(0x3) flags= MAP_SHARED(0x1) fd=10 offset=0x41000[0m
+[34mioctl(29)[0m | [2mTID=625 TGID=566[0m | [35mRenderEngine[0m | [2mpc=0x7945166d68[0m | [2mret=0[0m | [32mfd=10 cmd=0x40108002 dir=1 type='�' nr=2 size=16 arg=0x76b1191b38[0m
+[34mioctl(29)[0m | [2mTID=625 TGID=566[0m | [35mRenderEngine[0m | [2mpc=0x7945166d68[0m | [2mret=0[0m | [32mfd=10 cmd=0x40108002 dir=1 type='�' nr=2 size=16 arg=0x76b1192078[0m
+[34mioctl(29)[0m | [2mTID=659 TGID=566[0m | [35mRegionSampling[0m | [2mpc=0x7945166d68[0m | [2mret=0[0m | [32mfd=671 cmd=0xc0303e03 dir=3 type='>' nr=3 size=48 arg=0x76993950d0[0m
+[34mioctl(29)[0m | [2mTID=659 TGID=566[0m | [35mRegionSampling[0m | [2mpc=0x7945166d68[0m | [2mret=0[0m | [32mfd=53 cmd=0x40086200 dir=1 type='b' nr=0 size=8 arg=0x76993952c0[0m
+[34mioctl(29)[0m | [2mTID=659 TGID=566[0m | [35mRegionSampling[0m | [2mpc=0x7945166d68[0m | [2mret=0[0m | [32mfd=53 cmd=0x40086200 dir=1 type='b' nr=0 size=8 arg=0x76993954a0[0m
+[34mioctl(29)[0m | [2mTID=659 TGID=566[0m | [35mRegionSampling[0m | [2mpc=0x7945166d68[0m | [2mret=0[0m | [32mfd=5 cmd=BINDER_WRITE_READ(0xc0306201) arg=0x7699395570[0m
+[34mioctl(29)[0m | [2mTID=2932 TGID=2095[0m | [35mbinder:2095_8[0m | [2mpc=0x737595dd68[0m | [2mret=0[0m | [32mfd=78 cmd=BINDER_WRITE_READ(0xc0306201) arg=0x6f59e8e588[0m
+[34mopenat(56)[0m | [2mTID=3025 TGID=653[0m | [35mNodeLooperThrea[0m | [2mpc=0x7e702cbfc8[0m | [2mret=0[0m | [32mdirfd=-100   path="/sys/devices/platform/17000010.devfreq_mif/devfreq/17000010.devfreq_mif/min_freq"   flags=O_WRONLY |O[0m
+[34mdo_filp_open(-1)[0m | [2mTID=3025 TGID=653[0m | [35mNodeLooperThrea[0m | [2mpc=0x7e702cbfc8[0m | [2mret=0[0m | [32mdfd=-100 filename=0xffffff8005429000 open_flags=0xffffffc0183dbce0[0m
+[34mopenat(56)[0m | [2mTID=3025 TGID=653[0m | [35mNodeLooperThrea[0m | [2mpc=0x7e702cbfc8[0m | [2mret=0[0m | [32mdirfd=-100   path="/sys/devices/platform/1c300000.drmdecon/early_wakeup"   flags=O_WRONLY |O_TRUNC(0x80201)   mode=00[0m
+[34mdo_filp_open(-1)[0m | [2mTID=3025 TGID=653[0m | [35mNodeLooperThrea[0m | [2mpc=0x7e702cbfc8[0m | [2mret=0[0m | [32mdfd=-100 filename=0xffffff8005429000 open_flags=0xffffffc0183dbce0[0m
+[34mioctl(29)[0m | [2mTID=611 TGID=568[0m | [35mDisplayHints[0m | [2mpc=0x7e4e376d68[0m | [2mret=0[0m | [32mfd=20 cmd=BINDER_WRITE_READ(0xc0306201) arg=0x7ba78357f0[0m
+[34mioctl(29)[0m | [2mTID=653 TGID=653[0m | [35mandroid.hardwar[0m | [2mpc=0x7e702cbd68[0m | [2mret=0[0m | [32mfd=4 cmd=BINDER_WRITE_READ(0xc0306201) arg=0x7ff0f46568[0m
+[34mopenat(56)[0m | [2mTID=3025 TGID=653[0m | [35mNodeLooperThrea[0m | [2mpc=0x7e702cbfc8[0m | [2mret=0[0m | [32mdirfd=-100   path="/proc/vendor_sched/groups/fg/prefer_idle"   flags=O_WRONLY |O_TRUNC(0x80201)   mode=00[0m
+[34mdo_filp_open(-1)[0m | [2mTID=3025 TGID=653[0m | [35mNodeLooperThrea[0m | [2mpc=0x7e702cbfc8[0m | [2mret=0[0m | [32mdfd=-100 filename=0xffffff8007496000 open_flags=0xffffffc0183dbce0[0m
+[34mioctl(29)[0m | [2mTID=15063 TGID=15063[0m | [35m.svcmonitor.app[0m | [2mpc=0x737595dd68[0m | [2mret=0[0m | [32mfd=78 cmd=BINDER_WRITE_READ(0xc0306201) arg=0x7fd85ed240[0m
+[34mioctl(29)[0m | [2mTID=1927 TGID=566[0m | [35mbinder:566_3[0m | [2mpc=0x7945166d68[0m | [2mret=0[0m | [32mfd=5 cmd=BINDER_WRITE_READ(0xc0306201) arg=0x76918ffa78[0m
+[34mioctl(29)[0m | [2mTID=15081 TGID=15063[0m | [35mRenderThread[0m | [2mpc=0x737595dd68[0m | [2mret=0[0m | [32mfd=78 cmd=BINDER_WRITE_READ(0xc0306201) arg=0x70b95672d0[0m
+[34mioctl(29)[0m | [2mTID=1896 TGID=1625[0m | [35mbinder:1625_5[0m | [2mpc=0x737595dd68[0m | [2mret=0[0m | [32mfd=73 cmd=BINDER_WRITE_READ(0xc0306201) arg=0x6f65df2640[0m
+[34mioctl(29)[0m | [2mTID=653 TGID=653[0m | [35mandroid.hardwar[0m | [2mpc=0x7e702cbd68[0m | [2mret=0[0m | [32mfd=4 cmd=BINDER_WRITE_READ(0xc0306201) arg=0x7ff0f46568[0m
+[34mioctl(29)[0m | [2mTID=1896 TGID=1625[0m | [35mbinder:1625_5[0m | [2mpc=0x737595dd68[0m | [2mret=0[0m | [32mfd=73 cmd=BINDER_WRITE_READ(0xc0306201) arg=0x6f65df3588[0m
+[34mopenat(56)[0m | [2mTID=3025 TGID=653[0m | [35mNodeLooperThrea[0m | [2mpc=0x7e702cbfc8[0m | [2mret=0[0m | [32mdirfd=-100   path="/sys/devices/platform/17000010.devfreq_mif/devfreq/17000010.devfreq_mif/min_freq"   flags=O_WRONLY |O[0m
+[34mdo_filp_open(-1)[0m | [2mTID=3025 TGID=653[0m | [35mNodeLooperThrea[0m | [2mpc=0x7e702cbfc8[0m | [2mret=0[0m | [32mdfd=-100 filename=0xffffff80074c4000 open_flags=0xffffffc0183dbce0[0m
+[34mioctl(29)[0m | [2mTID=15081 TGID=15063[0m | [35mRenderThread[0m | [2mpc=0x737595dd68[0m | [2mret=0[0m | [32mfd=465 cmd=0xc0383e04 dir=3 type='>' nr=4 size=56 arg=0x70b9567110[0m
+[34mioctl(29)[0m | [2mTID=15081 TGID=15063[0m | [35mRenderThread[0m | [2mpc=0x737595dd68[0m | [2mret=0[0m | [32mfd=465 cmd=0xc0383e04 dir=3 type='>' nr=4 size=56 arg=0xb40000727210e6a0[0m
+[34mioctl(29)[0m | [2mTID=15081 TGID=15063[0m | [35mRenderThread[0m | [2mpc=0x737595dd68[0m | [2mret=0[0m | [32mfd=94 cmd=0xc0208005 dir=3 type='�' nr=5 size=32 arg=0x70b9564908[0m
+[34mmmap(222)[0m | [2mTID=15081 TGID=15063[0m | [35mRenderThread[0m | [2mpc=0x737595e1e8[0m | [2mret=0[0m | [32maddr=0x0 len=131072 prot= PROT_READ |PROT_WRITE(0x3) flags= MAP_SHARED(0x1) fd=94 offset=0x41000[0m
+[34mioctl(29)[0m | [2mTID=15081 TGID=15063[0m | [35mRenderThread[0m | [2mpc=0x737595dd68[0m | [2mret=0[0m | [32mfd=94 cmd=0x40108002 dir=1 type='�' nr=2 size=16 arg=0x70b9566928[0m
+[34mioctl(29)[0m | [2mTID=15081 TGID=15063[0m | [35mRenderThread[0m | [2mpc=0x737595dd68[0m | [2mret=0[0m | [32mfd=78 cmd=BINDER_WRITE_READ(0xc0306201) arg=0x70b9565a60[0m
+[34mioctl(29)[0m | [2mTID=15081 TGID=15063[0m | [35mRenderThread[0m | [2mpc=0x737595dd68[0m | [2mret=0[0m | [32mfd=489 cmd=0xc0383e04 dir=3 type='>' nr=4 size=56 arg=0x70b9566cf0[0m
+[34mioctl(29)[0m | [2mTID=15081 TGID=15063[0m | [35mRenderThread[0m | [2mpc=0x737595dd68[0m | [2mret=0[0m | [32mfd=489 cmd=0xc0383e04 dir=3 type='>' nr=4 size=56 arg=0xb40000727210e6a0[0m
+[34mioctl(29)[0m | [2mTID=15081 TGID=15063[0m | [35mRenderThread[0m | [2mpc=0x737595dd68[0m | [2mret=0[0m | [32mfd=481 cmd=0xc0383e04 dir=3 type='>' nr=4 size=56 arg=0x70b9566cf0[0m
+[34mioctl(29)[0m | [2mTID=15081 TGID=15063[0m | [35mRenderThread[0m | [2mpc=0x737595dd68[0m | [2mret=0[0m | [32mfd=481 cmd=0xc0383e04 dir=3 type='>' nr=4 size=56 arg=0xb40000727210e6a0[0m
+[34mioctl(29)[0m | [2mTID=15081 TGID=15063[0m | [35mRenderThread[0m | [2mpc=0x737595dd68[0m | [2mret=0[0m | [32mfd=482 cmd=0xc0383e04 dir=3 type='>' nr=4 size=56 arg=0x70b9566cf0[0m
+[34mioctl(29)[0m | [2mTID=15081 TGID=15063[0m | [35mRenderThread[0m | [2mpc=0x737595dd68[0m | [2mret=0[0m | [32mfd=482 cmd=0xc0383e04 dir=3 type='>' nr=4 size=56 arg=0xb40000727210e6a0[0m
+[34mioctl(29)[0m | [2mTID=15081 TGID=15063[0m | [35mRenderThread[0m | [2mpc=0x737595dd68[0m | [2mret=0[0m | [32mfd=78 cmd=BINDER_WRITE_READ(0xc0306201) arg=0x70b9566ef0[0m
+[34mioctl(29)[0m | [2mTID=1927 TGID=566[0m | [35mbinder:566_3[0m | [2mpc=0x7945166d68[0m | [2mret=0[0m | [32mfd=5 cmd=BINDER_WRITE_READ(0xc0306201) arg=0x76918fe740[0m
+[34mioctl(29)[0m | [2mTID=1927 TGID=566[0m | [35mbinder:566_3[0m | [2mpc=0x7945166d68[0m | [2mret=0[0m | [32mfd=5 cmd=BINDER_WRITE_READ(0xc0306201) arg=0x76918fe610[0m
+[34mioctl(29)[0m | [2mTID=1927 TGID=566[0m | [35mbinder:566_3[0m | [2mpc=0x7945166d68[0m | [2mret=0[0m | [32mfd=5 cmd=BINDER_WRITE_READ(0xc0306201) arg=0x76918ffa78[0m
+[34mioctl(29)[0m | [2mTID=653 TGID=653[0m | [35mandroid.hardwar[0m | [2mpc=0x7e702cbd68[0m | [2mret=0[0m | [32mfd=4 cmd=BINDER_WRITE_READ(0xc0306201) arg=0x7ff0f46568[0m
+[34mioctl(29)[0m | [2mTID=653 TGID=653[0m | [35mandroid.hardwar[0m | [2mpc=0x7e702cbd68[0m | [2mret=0[0m | [32mfd=4 cmd=BINDER_WRITE_READ(0xc0306201) arg=0x7ff0f46568[0m
+[34mopenat(56)[0m | [2mTID=3025 TGID=653[0m | [35mNodeLooperThrea[0m | [2mpc=0x7e702cbfc8[0m | [2mret=0[0m | [32mdirfd=-100   path="/sys/devices/platform/1c300000.drmdecon/early_wakeup"   flags=O_WRONLY |O_TRUNC(0x80201)   mode=00[0m
+[34mdo_filp_open(-1)[0m | [2mTID=3025 TGID=653[0m | [35mNodeLooperThrea[0m | [2mpc=0x7e702cbfc8[0m | [2mret=0[0m | [32mdfd=-100 filename=0xffffff8007487000 open_flags=0xffffffc0183dbce0[0m
+[34mioctl(29)[0m | [2mTID=1896 TGID=1625[0m | [35mbinder:1625_5[0m | [2mpc=0x737595dd68[0m | [2mret=0[0m | [32mfd=73 cmd=BINDER_WRITE_READ(0xc0306201) arg=0x6f65df2500[0m
+[34mioctl(29)[0m | [2mTID=1896 TGID=1625[0m | [35mbinder:1625_5[0m | [2mpc=0x737595dd68[0m | [2mret=0[0m | [32mfd=73 cmd=BINDER_WRITE_READ(0xc0306201) arg=0x6f65df3588[0m
+[34mioctl(29)[0m | [2mTID=653 TGID=653[0m | [35mandroid.hardwar[0m | [2mpc=0x7e702cbd68[0m | [2mret=0[0m | [32mfd=4 cmd=BINDER_WRITE_READ(0xc0306201) arg=0x7ff0f46568[0m
+[34mioctl(29)[0m | [2mTID=566 TGID=566[0m | [35msurfaceflinger[0m | [2mpc=0x7945166d68[0m | [2mret=0[0m | [32mfd=669 cmd=0xc0383e04 dir=3 type='>' nr=4 size=56 arg=0x7fd217ff80[0m
+[34mioctl(29)[0m | [2mTID=566 TGID=566[0m | [35msurfaceflinger[0m | [2mpc=0x7945166d68[0m | [2mret=0[0m | [32mfd=669 cmd=0xc0383e04 dir=3 type='>' nr=4 size=56 arg=0xb4000077f5015300[0m
+[34mioctl(29)[0m | [2mTID=566 TGID=566[0m | [35msurfaceflinger[0m | [2mpc=0x7945166d68[0m | [2mret=0[0m | [32mfd=181 cmd=0xc0383e04 dir=3 type='>' nr=4 size=56 arg=0x7fd217f110[0m
+[34mioctl(29)[0m | [2mTID=566 TGID=566[0m | [35msurfaceflinger[0m | [2mpc=0x7945166d68[0m | [2mret=0[0m | [32mfd=181 cmd=0xc0383e04 dir=3 type='>' nr=4 size=56 arg=0xb4000077f5015300[0m
+[34mioctl(29)[0m | [2mTID=566 TGID=566[0m | [35msurfaceflinger[0m | [2mpc=0x7945166d68[0m | [2mret=0[0m | [32mfd=5 cmd=BINDER_WRITE_READ(0xc0306201) arg=0x7fd217f4e8[0m
+[34mioctl(29)[0m | [2mTID=566 TGID=566[0m | [35msurfaceflinger[0m | [2mpc=0x7945166d68[0m | [2mret=0[0m | [32mfd=5 cmd=BINDER_WRITE_READ(0xc0306201) arg=0x7fd217f4f8[0m
+[34mioctl(29)[0m | [2mTID=566 TGID=566[0m | [35msurfaceflinger[0m | [2mpc=0x7945166d68[0m | [2mret=0[0m | [32mfd=3 cmd=BINDER_WRITE_READ(0xc0306201) arg=0x7fd217ef80[0m
+[34mioctl(29)[0m | [2mTID=566 TGID=566[0m | [35msurfaceflinger[0m | [2mpc=0x7945166d68[0m | [2mret=0[0m | [32mfd=3 cmd=BINDER_WRITE_READ(0xc0306201) arg=0x7fd217ef80[0m
+[34mioctl(29)[0m | [2mTID=626 TGID=568[0m | [35mHwBinder:568_1[0m | [2mpc=0x7e4e376d68[0m | [2mret=0[0m | [32mfd=24 cmd=0xc0203e0a dir=3 type='>' nr=10 size=32 arg=0x7bb75a9c30[0m
+[34mioctl(29)[0m | [2mTID=626 TGID=568[0m | [35mHwBinder:568_1[0m | [2mpc=0x7e4e376d68[0m | [2mret=0[0m | [32mfd=34 cmd=0xc0203e0a dir=3 type='>' nr=10 size=32 arg=0x7bb75a9c30[0m
+[34mioctl(29)[0m | [2mTID=626 TGID=568[0m | [35mHwBinder:568_1[0m | [2mpc=0x7e4e376d68[0m | [2mret=0[0m | [32mfd=15 cmd=0xc01064bd dir=3 type='d' nr=189 size=16 arg=0x7b9a095908[0m
+[34mioctl(29)[0m | [2mTID=626 TGID=568[0m | [35mHwBinder:568_1[0m | [2mpc=0x7e4e376d68[0m | [2mret=0[0m | [32mfd=15 cmd=0xc00464be dir=3 type='d' nr=190 size=4 arg=0x7b9a095974[0m
+[2m── 共 100 条[0m

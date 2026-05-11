@@ -1,0 +1,2616 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SVC Monitor - Memory Analyzer</title>
+<style>
+:root {
+  --bg-primary: #0d1117;
+  --bg-secondary: #161b22;
+  --bg-tertiary: #21262d;
+  --bg-hover: #30363d;
+  --border: #30363d;
+  --text-primary: #e6edf3;
+  --text-secondary: #8b949e;
+  --text-muted: #6e7681;
+  --accent-blue: #58a6ff;
+  --accent-green: #3fb950;
+  --accent-red: #f85149;
+  --accent-orange: #d29922;
+  --accent-purple: #bc8cff;
+  --accent-cyan: #39d2c0;
+  --accent-yellow: #e3b341;
+  --mono: 'JetBrains Mono', 'Fira Code', 'SF Mono', 'Cascadia Code', Consolas, monospace;
+  --sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+}
+* { margin:0; padding:0; box-sizing:border-box; }
+body {
+  font-family: var(--sans);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  min-height: 100vh;
+  overflow-x: hidden;
+}
+/* ── Header ── */
+.header {
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border);
+  padding: 12px 24px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  position: sticky;
+  top: 0;
+  z-index: 100;
+}
+.header-left { display:flex; align-items:center; gap:16px; }
+.header h1 { font-size:18px; font-weight:600; }
+.header h1 span { color: var(--accent-purple); }
+.header-right { display:flex; align-items:center; gap:12px; }
+.pid-input-group { display:flex; align-items:center; gap:8px; }
+.pid-input-group label { color: var(--text-secondary); font-size:13px; }
+.pid-input-group input {
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  color: var(--text-primary);
+  padding: 6px 12px;
+  border-radius: 6px;
+  font-family: var(--mono);
+  font-size: 13px;
+  width: 100px;
+}
+.status-dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: var(--accent-red);
+  display: inline-block;
+}
+.status-dot.connected { background: var(--accent-green); }
+.status-text { color: var(--text-secondary); font-size: 12px; }
+
+/* ── Tabs ── */
+.tab-bar {
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  padding: 0 24px;
+  gap: 0;
+  overflow-x: auto;
+}
+.tab-btn {
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  padding: 10px 16px;
+  font-size: 13px;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  white-space: nowrap;
+  transition: all 0.2s;
+}
+.tab-btn:hover { color: var(--text-primary); background: var(--bg-hover); }
+.tab-btn.active {
+  color: var(--accent-blue);
+  border-bottom-color: var(--accent-blue);
+}
+.tab-content { display: none; padding: 20px 24px; }
+.tab-content.active { display: block; }
+
+/* ── Common Components ── */
+.btn {
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  color: var(--text-primary);
+  padding: 6px 14px;
+  border-radius: 6px;
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.15s;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.btn:hover { background: var(--bg-hover); border-color: var(--text-muted); }
+.btn-primary { background: #1f6feb; border-color: #1f6feb; }
+.btn-primary:hover { background: #388bfd; }
+.btn-danger { border-color: var(--accent-red); color: var(--accent-red); }
+.btn-sm { padding: 4px 10px; font-size: 12px; }
+
+.input, .select, textarea {
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  color: var(--text-primary);
+  padding: 6px 12px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-family: var(--mono);
+}
+textarea { resize: vertical; min-height: 100px; }
+.input:focus, .select:focus, textarea:focus {
+  outline: none;
+  border-color: var(--accent-blue);
+  box-shadow: 0 0 0 3px rgba(88,166,255,0.15);
+}
+.card {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 16px;
+  margin-bottom: 12px;
+}
+.card-title {
+  font-size: 14px;
+  font-weight: 600;
+  margin-bottom: 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 12px;
+  font-size: 11px;
+  font-weight: 500;
+}
+.badge-red { background: rgba(248,81,73,0.15); color: var(--accent-red); }
+.badge-orange { background: rgba(210,153,34,0.15); color: var(--accent-orange); }
+.badge-green { background: rgba(63,185,80,0.15); color: var(--accent-green); }
+.badge-blue { background: rgba(88,166,255,0.15); color: var(--accent-blue); }
+.badge-purple { background: rgba(188,140,255,0.15); color: var(--accent-purple); }
+.badge-cyan { background: rgba(57,210,192,0.15); color: var(--accent-cyan); }
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+.loading {
+  color: var(--text-muted);
+  text-align: center;
+  padding: 40px;
+  font-size: 14px;
+}
+.loading::before {
+  content: '⏳ ';
+}
+.error-msg {
+  background: rgba(248,81,73,0.1);
+  border: 1px solid rgba(248,81,73,0.3);
+  color: var(--accent-red);
+  padding: 10px 14px;
+  border-radius: 6px;
+  font-size: 13px;
+  margin: 8px 0;
+}
+.grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
+.mono { font-family: var(--mono); font-size: 12px; }
+
+/* ── Maps Tab ── */
+.maps-region {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  margin-bottom: 6px;
+  overflow: hidden;
+  transition: border-color 0.2s;
+}
+.maps-region:hover { border-color: var(--text-muted); }
+.maps-region.suspicious { border-color: var(--accent-orange); }
+.maps-region.dangerous { border-color: var(--accent-red); }
+.maps-region-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  background: var(--bg-tertiary);
+  cursor: pointer;
+  gap: 12px;
+}
+.maps-region-addr { font-family: var(--mono); font-size: 12px; color: var(--accent-cyan); flex-shrink:0; }
+.maps-region-perms { font-family: var(--mono); font-size: 12px; font-weight: 600; }
+.maps-region-perms.rwx { color: var(--accent-red); }
+.maps-region-perms.rx { color: var(--accent-green); }
+.maps-region-perms.rw { color: var(--accent-blue); }
+.maps-region-perms.r { color: var(--text-muted); }
+.maps-region-name {
+  flex: 1;
+  font-size: 12px;
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.maps-region-size { font-family: var(--mono); font-size: 11px; color: var(--text-muted); flex-shrink:0; }
+.maps-region-tags { display: flex; gap: 4px; flex-shrink: 0; }
+.maps-region-detail {
+  display: none;
+  padding: 10px 12px;
+  background: var(--bg-primary);
+  border-top: 1px solid var(--border);
+  font-size: 12px;
+}
+.maps-region-detail.open { display: block; }
+.maps-filter-bar {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+.maps-filter-chip {
+  padding: 4px 10px;
+  border-radius: 16px;
+  border: 1px solid var(--border);
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.maps-filter-chip:hover { border-color: var(--accent-blue); color: var(--text-primary); }
+.maps-filter-chip.active { background: rgba(88,166,255,0.15); border-color: var(--accent-blue); color: var(--accent-blue); }
+.maps-stats {
+  display: flex;
+  gap: 16px;
+  margin-bottom: 12px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.maps-stats span { font-family: var(--mono); color: var(--text-primary); }
+
+/* ── Hex Viewer ── */
+.hex-container {
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 12px;
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.6;
+  overflow-x: auto;
+  max-height: 600px;
+  overflow-y: auto;
+}
+.hex-line { display: flex; gap: 0; white-space: pre; }
+.hex-addr { color: var(--accent-cyan); min-width: 140px; user-select:none; }
+.hex-bytes { color: var(--text-primary); min-width: 400px; }
+.hex-bytes .highlight { background: rgba(227,179,65,0.3); color: var(--accent-yellow); border-radius: 2px; }
+.hex-ascii { color: var(--accent-green); border-left: 1px solid var(--border); padding-left: 12px; margin-left: 12px; }
+.hex-ascii .non-print { color: var(--text-muted); }
+
+/* ── Disassembly ── */
+.disasm-container {
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0;
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.7;
+  max-height: 600px;
+  overflow-y: auto;
+}
+.disasm-line {
+  display: flex;
+  padding: 2px 12px;
+  border-bottom: 1px solid rgba(48,54,61,0.5);
+  align-items: baseline;
+}
+.disasm-line:hover { background: var(--bg-hover); }
+.disasm-line.svc { background: rgba(248,81,73,0.1); }
+.disasm-line.brk { background: rgba(210,153,34,0.1); }
+.disasm-line.branch { background: rgba(188,140,255,0.05); }
+.disasm-addr { color: var(--accent-cyan); min-width: 140px; user-select:none; }
+.disasm-bytes { color: var(--text-muted); min-width: 100px; }
+.disasm-inst { min-width: 80px; font-weight: 500; }
+.disasm-inst.svc { color: var(--accent-red); font-weight: 700; }
+.disasm-inst.brk { color: var(--accent-orange); font-weight: 700; }
+.disasm-inst.br { color: var(--accent-purple); }
+.disasm-inst.bl { color: var(--accent-blue); }
+.disasm-inst.ret { color: var(--accent-orange); }
+.disasm-inst.nop { color: var(--text-muted); }
+.disasm-operands { color: var(--text-secondary); flex:1; }
+.disasm-comment { color: var(--text-muted); font-style: italic; margin-left: 16px; }
+
+/* ── Strings ── */
+.string-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.string-table th {
+  background: var(--bg-tertiary);
+  padding: 8px 12px;
+  text-align: left;
+  font-weight: 600;
+  color: var(--text-secondary);
+  position: sticky;
+  top: 0;
+  border-bottom: 1px solid var(--border);
+}
+.string-table td {
+  padding: 6px 12px;
+  border-bottom: 1px solid rgba(48,54,61,0.5);
+}
+.string-table tr:hover td { background: var(--bg-hover); }
+.string-table .addr { font-family: var(--mono); color: var(--accent-cyan); }
+.string-table .str-val { font-family: var(--mono); color: var(--accent-green); word-break: break-all; }
+.string-table .str-lib { color: var(--text-muted); font-size: 11px; }
+
+/* ── SVC Scanner ── */
+.svc-result {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  margin-bottom: 8px;
+  overflow: hidden;
+}
+.svc-result-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  background: rgba(248,81,73,0.08);
+  cursor: pointer;
+}
+.svc-result-addr { font-family: var(--mono); font-size: 13px; color: var(--accent-red); font-weight: 600; }
+.svc-result-lib { font-size: 12px; color: var(--text-secondary); }
+.svc-result-detail { display: none; padding: 0; }
+.svc-result-detail.open { display: block; }
+
+/* ── Frida Generator ── */
+.frida-template {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 12px;
+  margin-bottom: 8px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.frida-template:hover { border-color: var(--accent-blue); background: var(--bg-hover); }
+.frida-template.selected { border-color: var(--accent-blue); background: rgba(88,166,255,0.08); }
+.frida-template-title { font-weight: 600; font-size: 13px; margin-bottom: 4px; }
+.frida-template-desc { font-size: 12px; color: var(--text-secondary); }
+.code-output {
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 16px;
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.6;
+  max-height: 500px;
+  overflow: auto;
+  white-space: pre;
+  color: var(--text-primary);
+  position: relative;
+}
+.code-output .copy-btn {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  cursor: pointer;
+}
+.code-output .copy-btn:hover { background: var(--bg-hover); color: var(--text-primary); }
+
+/* ── Watchpoint / Real-time ── */
+.watch-entry {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  margin-bottom: 6px;
+  font-size: 12px;
+}
+.watch-entry .addr { font-family: var(--mono); color: var(--accent-cyan); }
+.watch-entry .old-val { font-family: var(--mono); color: var(--accent-red); text-decoration: line-through; }
+.watch-entry .new-val { font-family: var(--mono); color: var(--accent-green); }
+.watch-entry .timestamp { color: var(--text-muted); font-size: 11px; }
+.watch-log {
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 12px;
+  max-height: 400px;
+  overflow-y: auto;
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 1.8;
+}
+.watch-log .change { color: var(--accent-yellow); }
+.watch-log .read { color: var(--accent-blue); }
+.watch-log .write { color: var(--accent-red); }
+
+/* ── Scrollbar ── */
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: var(--bg-primary); }
+::-webkit-scrollbar-thumb { background: var(--bg-hover); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+
+/* ── Toast ── */
+.toast {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px 20px;
+  font-size: 13px;
+  z-index: 1000;
+  opacity: 0;
+  transform: translateY(20px);
+  transition: all 0.3s;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+}
+.toast.show { opacity: 1; transform: translateY(0); }
+.toast.success { border-color: var(--accent-green); }
+.toast.error { border-color: var(--accent-red); }
+
+/* ── Split Pane ── */
+.split-h { display: flex; gap: 12px; }
+.split-h > .pane-left { flex: 1; min-width: 0; }
+.split-h > .pane-right { width: 400px; flex-shrink: 0; }
+
+@media (max-width: 1200px) {
+  .split-h { flex-direction: column; }
+  .split-h > .pane-right { width: 100%; }
+  .grid-2, .grid-3 { grid-template-columns: 1fr; }
+}
+</style>
+</head>
+<body>
+
+<!-- Header -->
+<div class="header">
+  <div class="header-left">
+    <h1>🔬 SVC Monitor — <span>Memory Analyzer</span></h1>
+  </div>
+  <div class="header-right">
+    <div class="pid-input-group">
+      <label>Target PID:</label>
+      <input type="text" id="targetPid" placeholder="e.g. 12345" />
+      <button class="btn btn-primary btn-sm" onclick="loadMaps()">Load Maps</button>
+    </div>
+    <div class="pid-input-group" style="margin-left:12px">
+      <label>API:</label>
+      <input type="text" id="apiBase" value="http://127.0.0.1:5000" style="width:180px" />
+    </div>
+    <span class="status-dot" id="statusDot"></span>
+    <span class="status-text" id="statusText">Disconnected</span>
+  </div>
+</div>
+
+
+/* ── Detection Reverser Tab ── */
+.needle-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 14px 16px;
+  margin-bottom: 10px;
+  transition: border-color 0.2s;
+}
+.needle-card:hover { border-color: var(--accent-red); }
+.needle-card .needle-value {
+  font-family: var(--mono);
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--accent-red);
+  letter-spacing: 0.5px;
+}
+.needle-card .needle-meta {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 6px 16px;
+  margin-top: 8px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+.needle-card .needle-meta .label {
+  color: var(--text-muted);
+  margin-right: 4px;
+}
+.needle-card .needle-meta .value-link {
+  color: var(--accent-cyan);
+  cursor: pointer;
+  text-decoration: underline;
+}
+.needle-card .needle-meta .value-link:hover { color: var(--accent-blue); }
+.needle-hit-bar {
+  height: 4px;
+  background: var(--bg-sidebar);
+  border-radius: 2px;
+  margin-top: 8px;
+  overflow: hidden;
+}
+.needle-hit-bar .fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--accent-red), var(--accent-orange));
+  border-radius: 2px;
+  transition: width 0.5s ease;
+}
+.dr-status-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 12px;
+}
+.dr-stat-item {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px;
+  text-align: center;
+}
+.dr-stat-item .stat-num {
+  font-size: 24px;
+  font-weight: 700;
+  font-family: var(--mono);
+  color: var(--accent-cyan);
+}
+.dr-stat-item .stat-label {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 4px;
+}
+.dr-context-dump {
+  background: var(--bg-sidebar);
+  border-radius: 8px;
+  padding: 14px;
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  max-height: 400px;
+  overflow-y: auto;
+  color: var(--text-primary);
+}
+.dr-context-dump .reg-name { color: var(--accent-yellow); font-weight: 600; }
+.dr-context-dump .reg-addr { color: var(--accent-cyan); }
+.dr-context-dump .reg-str { color: var(--accent-green); font-weight: 600; }
+.dr-context-dump .section-header { color: var(--accent-orange); font-weight: 700; margin-top: 6px; }
+.dr-frida-output {
+  background: #0d1117;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 14px;
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  max-height: 300px;
+  overflow-y: auto;
+  color: #e6edf3;
+}
+
+<!-- Tab Bar -->
+<div class="tab-bar">
+  <button class="tab-btn active" data-tab="maps">📍 Maps Analyzer</button>
+  <button class="tab-btn" data-tab="memory">🔍 Memory Viewer</button>
+  <button class="tab-btn" data-tab="disasm">⚙️ Disassembler</button>
+  <button class="tab-btn" data-tab="strings">📝 String Scanner</button>
+  <button class="tab-btn" data-tab="svc-scan">🎯 SVC Scanner</button>
+  <button class="tab-btn" data-tab="frida">🔧 Frida Generator</button>
+  <button class="tab-btn" data-tab="watchpoint">👁️ Watchpoint</button>
+  <button class="tab-btn" data-tab="detect-reverser">🔬 Detection Reverser</button>
+</div>
+
+<!-- ═══════════ TAB: Maps Analyzer ═══════════ -->
+<div class="tab-content active" id="tab-maps">
+  <div class="maps-stats" id="mapsStats"></div>
+  <div class="maps-filter-bar">
+    <span style="color:var(--text-muted);font-size:12px;">Filter:</span>
+    <div class="maps-filter-chip active" data-filter="all">All</div>
+    <div class="maps-filter-chip" data-filter="suspicious">⚠️ Suspicious</div>
+    <div class="maps-filter-chip" data-filter="executable">Executable (r-x)</div>
+    <div class="maps-filter-chip" data-filter="rwx">RWX Regions</div>
+    <div class="maps-filter-chip" data-filter="anon">Anonymous</div>
+    <div class="maps-filter-chip" data-filter="stack">Stack/Heap</div>
+    <div class="maps-filter-chip" data-filter="lib">Libraries (.so)</div>
+    <div class="maps-filter-chip" data-filter="vmp">VMP/Packed</div>
+    <input type="text" class="input" id="mapsSearch" placeholder="Search library name or address..." style="flex:1;min-width:200px;" />
+  </div>
+  <div id="mapsContainer">
+    <div class="loading" style="display:none" id="mapsLoading">Loading maps...</div>
+    <div id="mapsList"></div>
+  </div>
+</div>
+
+<!-- ═══════════ TAB: Memory Viewer ═══════════ -->
+<div class="tab-content" id="tab-memory">
+  <div class="toolbar">
+    <input type="text" class="input" id="memAddr" placeholder="Address (hex): 0x7f12340000" style="width:220px" />
+    <input type="number" class="input" id="memSize" value="256" min="16" max="4096" style="width:100px" title="Size in bytes" />
+    <button class="btn btn-primary" onclick="readMemory()">Read Memory</button>
+    <button class="btn" onclick="readMemoryPrev()">◀ Prev</button>
+    <button class="btn" onclick="readMemoryNext()">Next ▶</button>
+    <span style="color:var(--text-muted);font-size:12px;margin-left:8px">Interpret as:</span>
+    <select class="select" id="memInterpret">
+      <option value="hex">Hex Dump</option>
+      <option value="uint32">UInt32 Array</option>
+      <option value="uint64">UInt64 Array</option>
+      <option value="float">Float Array</option>
+      <option value="pointer">Pointers</option>
+    </select>
+  </div>
+  <div class="split-h">
+    <div class="pane-left">
+      <div class="card">
+        <div class="card-title">Hex Dump</div>
+        <div class="hex-container" id="hexDisplay">
+          <div style="color:var(--text-muted);padding:20px;text-align:center;">Enter an address and click "Read Memory"</div>
+        </div>
+      </div>
+    </div>
+    <div class="pane-right">
+      <div class="card">
+        <div class="card-title">Region Info</div>
+        <div id="memRegionInfo" style="font-size:12px;color:var(--text-secondary);">—</div>
+      </div>
+      <div class="card">
+        <div class="card-title">Quick Actions</div>
+        <div style="display:flex;flex-direction:column;gap:6px;">
+          <button class="btn btn-sm" onclick="disasmAtAddr()">Disassemble at this address</button>
+          <button class="btn btn-sm" onclick="stringsAtAddr()">Extract strings nearby</button>
+          <button class="btn btn-sm" onclick="scanSvcNear()">Scan SVC near this address</button>
+          <button class="btn btn-sm" onclick="genFridaDump()">Generate Frida dump script</button>
+          <button class="btn btn-sm" onclick="watchAddr()">Add Watchpoint</button>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-title">Data Interpretation</div>
+        <div id="dataInterpret" class="mono" style="color:var(--text-secondary);line-height:1.8;"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════ TAB: Disassembler ═══════════ -->
+<div class="tab-content" id="tab-disasm">
+  <div class="toolbar">
+    <input type="text" class="input" id="disasmAddr" placeholder="Address (hex): 0x7f12340000" style="width:220px" />
+    <input type="number" class="input" id="disasmCount" value="50" min="1" max="500" style="width:80px" title="Number of instructions" />
+    <button class="btn btn-primary" onclick="disassemble()">Disassemble</button>
+    <button class="btn" onclick="disasmPrev()">◀ Prev</button>
+    <button class="btn" onclick="disasmNext()">Next ▶</button>
+    <span style="flex:1"></span>
+    <label style="font-size:12px;color:var(--text-secondary);display:flex;align-items:center;gap:4px;">
+      <input type="checkbox" id="disasmHighlight" checked /> Highlight SVC/BR/BRK
+    </label>
+  </div>
+  <div class="card">
+    <div class="card-title">ARM64 Disassembly <span id="disasmRange" style="font-size:11px;color:var(--text-muted);margin-left:8px;"></span></div>
+    <div class="disasm-container" id="disasmDisplay">
+      <div style="color:var(--text-muted);padding:20px;text-align:center;">Enter an address and click "Disassemble"</div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════ TAB: String Scanner ═══════════ -->
+<div class="tab-content" id="tab-strings">
+  <div class="toolbar">
+    <input type="text" class="input" id="strAddr" placeholder="Start address (hex)" style="width:200px" />
+    <input type="number" class="input" id="strSize" value="65536" style="width:100px" title="Scan size in bytes" />
+    <input type="number" class="input" id="strMinLen" value="4" min="1" max="50" style="width:60px" title="Min string length" />
+    <button class="btn btn-primary" onclick="scanStrings()">Scan Strings</button>
+    <input type="text" class="input" id="strFilter" placeholder="Filter strings..." style="flex:1;min-width:150px" oninput="filterStrings()" />
+    <select class="select" id="strEncoding">
+      <option value="utf8">UTF-8</option>
+      <option value="ascii">ASCII Only</option>
+    </select>
+  </div>
+  <div class="card">
+    <div class="card-title">Strings Found <span id="strCount" class="badge badge-blue" style="margin-left:8px;">0</span></div>
+    <div style="max-height:600px;overflow-y:auto;">
+      <table class="string-table" id="strTable">
+        <thead>
+          <tr><th style="width:140px">Address</th><th style="width:60px">Length</th><th>String</th><th style="width:180px">Library</th><th style="width:80px">Action</th></tr>
+        </thead>
+        <tbody id="strTableBody"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════ TAB: SVC Scanner ═══════════ -->
+<div class="tab-content" id="tab-svc-scan">
+  <div class="toolbar">
+    <input type="text" class="input" id="svcAddr" placeholder="Scan start address (hex)" style="width:200px" />
+    <input type="number" class="input" id="svcSize" value="65536" style="width:100px" title="Scan size" />
+    <input type="number" class="input" id="svcContext" value="5" min="0" max="20" style="width:60px" title="Context instructions" />
+    <button class="btn btn-primary" onclick="scanSvc()">🎯 Scan SVC #0</button>
+    <button class="btn" onclick="scanSvcAllLibs()">Scan All Executable Regions</button>
+  </div>
+  <div class="card">
+    <div class="card-title">SVC #0 Sites Found <span id="svcCount" class="badge badge-red" style="margin-left:8px;">0</span></div>
+    <div id="svcResults"></div>
+  </div>
+</div>
+
+<!-- ═══════════ TAB: Frida Generator ═══════════ -->
+<div class="tab-content" id="tab-frida">
+  <div class="grid-2">
+    <div>
+      <div class="card">
+        <div class="card-title">Script Templates</div>
+        <div class="frida-template selected" data-tpl="watchpoint" onclick="selectFridaTemplate(this)">
+          <div class="frida-template-title">👁️ Memory Watchpoint</div>
+          <div class="frida-template-desc">Monitor memory read/write at specific addresses with access logging</div>
+        </div>
+        <div class="frida-template" data-tpl="dump" onclick="selectFridaTemplate(this)">
+          <div class="frida-template-title">📦 Region Dump</div>
+          <div class="frida-template-desc">Dump memory region to file with hex+ascii view</div>
+        </div>
+        <div class="frida-template" data-tpl="svc_intercept" onclick="selectFridaTemplate(this)">
+          <div class="frida-template-title">🎯 SVC Interceptor</div>
+          <div class="frida-template-desc">Hook SVC #0 instructions and log syscall args + return values</div>
+        </div>
+        <div class="frida-template" data-tpl="string_decrypt" onclick="selectFridaTemplate(this)">
+          <div class="frida-template-title">🔓 String Decryption Tracer</div>
+          <div class="frida-template-desc">Trace string decrypt functions, log input/output buffers</div>
+        </div>
+        <div class="frida-template" data-tpl="br_trace" onclick="selectFridaTemplate(this)">
+          <div class="frida-template-title">🌿 BR Obfuscation Tracer</div>
+          <div class="frida-template-desc">Trace indirect branches (BR Xn) to reconstruct control flow</div>
+        </div>
+        <div class="frida-template" data-tpl="vmp_trace" onclick="selectFridaTemplate(this)">
+          <div class="frida-template-title">🛡️ VMP Handler Tracer</div>
+          <div class="frida-template-desc">Trace VM handler dispatch, opcode table, and interpreter loop</div>
+        </div>
+        <div class="frida-template" data-tpl="custom" onclick="selectFridaTemplate(this)">
+          <div class="frida-template-title">✏️ Custom Script</div>
+          <div class="frida-template-desc">Start from scratch with common Frida helpers pre-loaded</div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-title">Parameters</div>
+        <div id="fridaParams"></div>
+      </div>
+    </div>
+    <div>
+      <div class="card" style="position:sticky;top:80px;">
+        <div class="card-title">
+          Generated Script
+          <span style="flex:1"></span>
+          <button class="btn btn-sm" onclick="copyFridaScript()">📋 Copy</button>
+          <button class="btn btn-sm" onclick="downloadFridaScript()">💾 Save</button>
+        </div>
+        <div class="code-output" id="fridaOutput">// Select a template and configure parameters</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════ TAB: Watchpoint ═══════════ -->
+<div class="tab-content" id="tab-watchpoint">
+  <div class="card">
+    <div class="card-title">⚡ Real-time Memory Watchpoint</div>
+    <p style="font-size:12px;color:var(--text-secondary);margin-bottom:12px;">
+      Add addresses to monitor. Uses Frida MemoryAccessMonitor / Stalker to track reads and writes in real-time.
+      First generate a Frida script, then paste the output here or connect via Frida RPC.
+    </p>
+    <div class="toolbar">
+      <input type="text" class="input" id="watchAddr" placeholder="Address (hex)" style="width:200px" />
+      <input type="number" class="input" id="watchSize" value="8" min="1" max="4096" style="width:80px" title="Size (bytes)" />
+      <select class="select" id="watchType">
+        <option value="rw">Read + Write</option>
+        <option value="w">Write Only</option>
+        <option value="r">Read Only</option>
+      </select>
+      <button class="btn btn-primary" onclick="addWatchpoint()">+ Add Watch</button>
+      <button class="btn btn-danger" onclick="clearWatchpoints()">Clear All</button>
+      <span style="flex:1"></span>
+      <button class="btn" onclick="genWatchScript()">Generate Frida Script</button>
+    </div>
+    <div id="watchList"></div>
+  </div>
+  <div class="grid-2">
+    <div class="card">
+      <div class="card-title">Active Watchpoints</div>
+      <div id="watchActive" style="font-size:12px;color:var(--text-muted);">No watchpoints added</div>
+    </div>
+    <div class="card">
+      <div class="card-title">Access Log <span id="watchLogCount" class="badge badge-blue">0</span></div>
+      <div class="watch-log" id="watchLog">
+        <div style="color:var(--text-muted);">Waiting for memory access events...</div>
+      </div>
+    </div>
+  </div>
+  <div class="card">
+    <div class="card-title">Manual Paste (Frida output → here)</div>
+    <textarea class="input" id="watchPasteInput" placeholder='Paste Frida console output here (JSON lines format: {"type":"access","addr":"0x...","value":"...","old":"...","op":"read|write","ts":123456})' style="width:100%;min-height:120px;font-family:var(--mono);font-size:11px;"></textarea>
+    <button class="btn btn-sm" onclick="parseWatchPaste()" style="margin-top:8px;">Parse & Display</button>
+  </div>
+</div>
+
+
+<div class="tab-content" id="tab-detect-reverser">
+  <!-- Control Panel -->
+  <div class="card">
+    <div class="card-title">🔬 Detection Reverser — 逆向壳的检测行为</div>
+    <p style="font-size:12px;color:var(--text-secondary);margin-bottom:12px;">
+      通过 syscall hook 解引用寄存器和栈指针，自动捕获壳的检测函数正在搜索的字符串（needle）。<br/>
+      不需要 hook libc，不需要知道壳用什么函数实现 —— 只要它做 syscall，我们就能看到它手里拿着什么。
+    </p>
+    <div class="toolbar">
+      <button class="btn btn-primary" onclick="drEnable()">▶ Enable</button>
+      <button class="btn btn-danger" onclick="drDisable()">⏹ Disable</button>
+      <button class="btn" onclick="drRefreshNeedles()">🔄 Refresh Needles</button>
+      <button class="btn" onclick="drRefreshStatus()">📊 Status</button>
+      <button class="btn btn-danger" onclick="drClear()">🗑️ Clear Data</button>
+      <span style="flex:1"></span>
+      <label style="font-size:12px;color:var(--text-muted);">
+        Auto-refresh:
+        <input type="checkbox" id="drAutoRefresh" onchange="drToggleAutoRefresh()">
+        <span id="drAutoRefreshLabel">off</span>
+      </label>
+    </div>
+  </div>
+
+  <!-- Config -->
+  <div class="card" style="margin-top:-8px;">
+    <div class="card-title" style="font-size:13px;">⚙️ Configuration</div>
+    <div class="toolbar" style="flex-wrap:wrap;gap:8px;">
+      <label style="font-size:12px;color:var(--text-secondary);">
+        <input type="checkbox" id="drCfgStackScan" checked> Stack Scan
+      </label>
+      <label style="font-size:12px;color:var(--text-secondary);">
+        <input type="checkbox" id="drCfgFullDump" checked> Full Context Dump
+      </label>
+      <label style="font-size:12px;color:var(--text-secondary);">
+        <input type="checkbox" id="drCfgAllThreads"> All Threads
+      </label>
+      <span style="flex:1"></span>
+      <div style="display:flex;gap:6px;align-items:center;">
+        <label style="font-size:12px;color:var(--text-muted);">Add TID:</label>
+        <input type="text" class="input" id="drAddTidInput" placeholder="TID" style="width:100px" />
+        <button class="btn btn-sm" onclick="drAddTid()">+ Add</button>
+      </div>
+      <button class="btn btn-sm" onclick="drApplyConfig()">Apply Config</button>
+    </div>
+  </div>
+
+  <!-- Status Overview -->
+  <div class="card" id="drStatusCard" style="display:none;margin-top:-8px;">
+    <div class="card-title" style="font-size:13px;">📊 Status</div>
+    <div class="dr-status-grid" id="drStatusGrid"></div>
+  </div>
+
+  <!-- Captured Needles (★ Main Display) -->
+  <div class="card">
+    <div class="card-title">
+      🎯 Captured Detection Strings (Needles)
+      <span class="badge badge-red" id="drNeedleCount">0</span>
+    </div>
+    <p style="font-size:11px;color:var(--text-muted);margin-bottom:12px;">
+      这些是壳的检测函数在搜索时手里拿着的字符串。点击 PC 地址可跳转到 Disassembler 分析检测函数。
+    </p>
+    <div id="drNeedleList">
+      <div style="color:var(--text-muted);text-align:center;padding:40px;">
+        Click "Enable" and wait for the shell to run its detection.
+        Then click "Refresh Needles" to see captured strings.
+      </div>
+    </div>
+  </div>
+
+  <!-- Context Dump Viewer -->
+  <div class="card" id="drDumpCard" style="display:none;">
+    <div class="card-title">
+      📋 Context Dump Detail
+      <span style="font-size:11px;color:var(--text-muted);margin-left:8px;" id="drDumpLabel"></span>
+    </div>
+    <div class="toolbar" style="margin-bottom:8px;">
+      <button class="btn btn-sm" onclick="drPrevDump()">◀ Prev</button>
+      <span id="drDumpIdx" style="font-size:12px;color:var(--text-secondary);margin:0 8px;">#0</span>
+      <button class="btn btn-sm" onclick="drNextDump()">Next ▶</button>
+    </div>
+    <div class="dr-context-dump" id="drDumpContent">No dump loaded</div>
+  </div>
+
+  <!-- Quick Actions -->
+  <div class="grid-2">
+    <div class="card">
+      <div class="card-title" style="font-size:13px;">🔧 Generate Frida Patch</div>
+      <p style="font-size:11px;color:var(--text-muted);margin-bottom:8px;">
+        基于捕获到的 needle 自动生成 Frida 脚本来绕过检测
+      </p>
+      <div class="toolbar" style="flex-wrap:wrap;gap:6px;">
+        <select class="select" id="drPatchMode" style="width:180px;">
+          <option value="nop_return">NOP Return (跳过检测函数)</option>
+          <option value="replace_needle">Replace Needle (覆写字符串)</option>
+          <option value="hook_strcmp">Hook Search Func (替换搜索结果)</option>
+        </select>
+        <button class="btn btn-primary btn-sm" onclick="drGenPatch()">Generate Script</button>
+      </div>
+      <div class="dr-frida-output" id="drPatchOutput" style="margin-top:8px;display:none;"></div>
+    </div>
+    <div class="card">
+      <div class="card-title" style="font-size:13px;">📝 Raw kpmctl Output</div>
+      <p style="font-size:11px;color:var(--text-muted);margin-bottom:8px;">
+        直接查看 kpmctl 命令的原始输出
+      </p>
+      <div class="toolbar" style="gap:6px;">
+        <select class="select" id="drRawCmd" style="width:200px;">
+          <option value="dr_needles">dr_needles</option>
+          <option value="dr_status">dr_status</option>
+          <option value="dr_dump 0">dr_dump 0</option>
+        </select>
+        <button class="btn btn-sm" onclick="drRunRaw()">Execute</button>
+      </div>
+      <pre class="dr-frida-output" id="drRawOutput" style="margin-top:8px;display:none;"></pre>
+    </div>
+  </div>
+</div>
+
+<!-- Toast -->
+<div class="toast" id="toast"></div>
+
+<script>
+// ═══════════════════════════════════════════════
+//  Global State
+// ═══════════════════════════════════════════════
+const state = {
+  maps: [],
+  mapsRaw: [],
+  currentMemAddr: null,
+  currentMemData: null,
+  currentDisasmAddr: null,
+  allStrings: [],
+  watchpoints: [],
+  watchLog: [],
+  fridaTemplate: 'watchpoint'
+};
+
+function getApiBase() { return document.getElementById('apiBase').value.replace(/\/$/,''); }
+function getPid() { return document.getElementById('targetPid').value.trim(); }
+
+// ── API Helper ──
+async function api(path, opts={}) {
+  const base = getApiBase();
+  const url = `${base}${path}`;
+  try {
+    const resp = await fetch(url, {
+      ...opts,
+      headers: { 'Content-Type': 'application/json', ...opts.headers }
+    });
+    if (!resp.ok) {
+      const err = await resp.json().catch(()=>({error: resp.statusText}));
+      throw new Error(err.error || `HTTP ${resp.status}`);
+    }
+    return await resp.json();
+  } catch(e) {
+    if (e.message.includes('Failed to fetch')) {
+      throw new Error('Cannot connect to API server. Check the API base URL.');
+    }
+    throw e;
+  }
+}
+
+// ── Toast ──
+function toast(msg, type='success') {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.className = `toast ${type} show`;
+  setTimeout(() => el.classList.remove('show'), 3000);
+}
+
+
+// ═══════════════════════════════════════════════
+//  Detection Reverser Functions
+// ═══════════════════════════════════════════════
+let drAutoRefreshTimer = null;
+let drCurrentDumpIdx = 0;
+let drCapturedNeedles = [];
+
+async function drEnable() {
+  const pid = getPid();
+  if (!pid) return toast('Enter PID first', 'error');
+  
+  const config = {
+    stack_scan: document.getElementById('drCfgStackScan').checked,
+    full_dump: document.getElementById('drCfgFullDump').checked,
+    all_threads: document.getElementById('drCfgAllThreads').checked,
+  };
+  
+  try {
+    const res = await api(`/api/dr/enable/${pid}`, {
+      method: 'POST',
+      body: JSON.stringify({ config })
+    });
+    toast(`Detection Reverser enabled for PID ${pid}`);
+    drRefreshStatus();
+  } catch(e) {
+    toast('Enable failed: ' + e.message, 'error');
+  }
+}
+
+async function drDisable() {
+  try {
+    await api('/api/dr/disable', { method: 'POST' });
+    toast('Detection Reverser disabled');
+    if (drAutoRefreshTimer) drToggleAutoRefresh();
+  } catch(e) {
+    toast('Disable failed: ' + e.message, 'error');
+  }
+}
+
+async function drRefreshNeedles() {
+  try {
+    const res = await api('/api/dr/needles');
+    drCapturedNeedles = res.needles || [];
+    document.getElementById('drNeedleCount').textContent = res.total || 0;
+    renderNeedles(drCapturedNeedles);
+    if (drCapturedNeedles.length > 0) {
+      toast(`Found ${drCapturedNeedles.length} unique detection strings`);
+    }
+  } catch(e) {
+    toast('Refresh failed: ' + e.message, 'error');
+  }
+}
+
+function renderNeedles(needles) {
+  const container = document.getElementById('drNeedleList');
+  if (!needles.length) {
+    container.innerHTML = '<div style="color:var(--text-muted);text-align:center;padding:40px;">No needles captured yet. Wait for the shell to run detection, then refresh.</div>';
+    return;
+  }
+  
+  const maxHits = Math.max(...needles.map(n => n.hits), 1);
+  
+  container.innerHTML = needles.map((n, i) => {
+    const hitPct = Math.round((n.hits / maxHits) * 100);
+    const viaLabel = formatVia(n.via);
+    const nrLabel = formatSyscallNr(n.syscall_nr);
+    const pcLink = n.pc ? `<span class="value-link" onclick="jumpToDisasm('${n.pc}')" title="Disassemble at this PC">${n.pc}</span>` : '-';
+    const lrLink = n.lr ? `<span class="value-link" onclick="jumpToDisasm('${n.lr}')" title="Disassemble at LR">${n.lr}</span>` : '-';
+    
+    return `
+      <div class="needle-card">
+        <div style="display:flex;align-items:baseline;gap:12px;">
+          <span style="color:var(--text-muted);font-size:12px;font-family:var(--mono);">[${i}]</span>
+          <span class="needle-value">"${escHtml(n.value)}"</span>
+          <span class="badge badge-red" style="font-size:11px;">${n.hits} hits</span>
+        </div>
+        <div class="needle-meta">
+          <div><span class="label">Found via:</span> ${viaLabel}</div>
+          <div><span class="label">Address:</span> <span style="color:var(--accent-cyan);font-family:var(--mono);">${n.addr || '-'}</span></div>
+          <div><span class="label">PC:</span> ${pcLink}</div>
+          <div><span class="label">LR:</span> ${lrLink}</div>
+          <div><span class="label">TID:</span> ${n.tid || '-'}</div>
+          <div><span class="label">Thread:</span> ${n.comm || '-'}</div>
+          <div><span class="label">Syscall:</span> ${nrLabel}</div>
+          <div>
+            <button class="btn btn-sm" onclick="drViewDump(${i})" style="font-size:10px;padding:2px 8px;">Context</button>
+            <button class="btn btn-sm" onclick="drNeedleToFrida(${i})" style="font-size:10px;padding:2px 8px;">Frida</button>
+          </div>
+        </div>
+        <div class="needle-hit-bar"><div class="fill" style="width:${hitPct}%"></div></div>
+      </div>`;
+  }).join('');
+}
+
+function formatVia(via) {
+  if (!via) return '-';
+  if (via.includes('register')) return '🔹 ' + via;
+  if (via.includes('ptr_array')) return '🔸 ' + via;
+  if (via.includes('stack')) return '📚 ' + via;
+  return via;
+}
+
+function formatSyscallNr(nr) {
+  const names = { 56: 'openat', 63: 'read', 94: 'exit_group', 129: 'kill' };
+  const name = names[nr];
+  if (!name) return nr ? `#${nr}` : '-';
+  const isKill = (nr === 129 || nr === 94);
+  return isKill ? `<span style="color:var(--accent-red);font-weight:700;">★ ${name} (#${nr})</span>` : `${name} (#${nr})`;
+}
+
+function escHtml(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+async function drRefreshStatus() {
+  try {
+    const res = await api('/api/dr/status');
+    const s = res.status || {};
+    const card = document.getElementById('drStatusCard');
+    card.style.display = 'block';
+    
+    const items = [
+      { label: 'Enabled', value: s.enabled ? '✅ YES' : '❌ NO', color: s.enabled ? 'var(--accent-green)' : 'var(--accent-red)' },
+      { label: 'Target PID', value: s.target_pid || '-' },
+      { label: 'Unique Needles', value: s.needle_count || 0, color: 'var(--accent-red)' },
+      { label: 'Context Dumps', value: s.dump_count || 0 },
+      { label: 'Syscalls Scanned', value: s.syscalls_scanned || 0 },
+      { label: 'Regs Derefed', value: s.regs_derefed || 0, color: 'var(--accent-cyan)' },
+      { label: 'Strings Found', value: s.strings_found || 0, color: 'var(--accent-green)' },
+      { label: 'New Needles', value: s.new_needles || 0, color: 'var(--accent-yellow)' },
+    ];
+    
+    document.getElementById('drStatusGrid').innerHTML = items.map(it => `
+      <div class="dr-stat-item">
+        <div class="stat-num" style="${it.color ? 'color:' + it.color : ''}">${it.value}</div>
+        <div class="stat-label">${it.label}</div>
+      </div>
+    `).join('');
+  } catch(e) {
+    toast('Status refresh failed: ' + e.message, 'error');
+  }
+}
+
+async function drViewDump(needleIdx) {
+  drCurrentDumpIdx = needleIdx;
+  try {
+    const res = await api(`/api/dr/dump/${needleIdx}`);
+    const card = document.getElementById('drDumpCard');
+    card.style.display = 'block';
+    document.getElementById('drDumpIdx').textContent = `#${needleIdx}`;
+    
+    const meta = res.meta || {};
+    let html = '';
+    html += `<span class="section-header">═══ Context Dump #${needleIdx} ═══</span>\n`;
+    html += `time=${meta.time || '-'}  pid=${meta.pid || '-'}  tid=${meta.tid || '-'}  comm=${meta.comm || '-'}  nr=${meta.nr || '-'}\n`;
+    html += `<span class="reg-name">pc</span>=<span class="reg-addr">${meta.pc || '-'}</span>  <span class="reg-name">sp</span>=<span class="reg-addr">${meta.sp || '-'}</span>  <span class="reg-name">lr</span>=<span class="reg-addr">${meta.lr || '-'}</span>\n\n`;
+    
+    if (res.registers && res.registers.length) {
+      html += `<span class="section-header">--- Registers with strings ---</span>\n`;
+      for (const r of res.registers) {
+        html += `  <span class="reg-name">${r.reg}</span> = <span class="reg-addr">${r.addr}</span> → <span class="reg-str">"${escHtml(r.value)}"</span>\n`;
+      }
+    }
+    
+    if (res.stack_strings && res.stack_strings.length) {
+      html += `\n<span class="section-header">--- Stack strings ---</span>\n`;
+      for (const s of res.stack_strings) {
+        html += `  [sp+<span class="reg-addr">${s.offset}</span>] → <span class="reg-addr">${s.addr}</span> → <span class="reg-str">"${escHtml(s.value)}"</span>\n`;
+      }
+    }
+    
+    document.getElementById('drDumpContent').innerHTML = html;
+    document.getElementById('drDumpLabel').textContent = `pid=${meta.pid} tid=${meta.tid} comm=${meta.comm}`;
+    card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  } catch(e) {
+    toast('Load dump failed: ' + e.message, 'error');
+  }
+}
+
+function drPrevDump() { if (drCurrentDumpIdx > 0) drViewDump(drCurrentDumpIdx - 1); }
+function drNextDump() { drViewDump(drCurrentDumpIdx + 1); }
+
+async function drApplyConfig() {
+  try {
+    await api('/api/dr/config', {
+      method: 'POST',
+      body: JSON.stringify({
+        stack_scan: document.getElementById('drCfgStackScan').checked,
+        full_dump: document.getElementById('drCfgFullDump').checked,
+        all_threads: document.getElementById('drCfgAllThreads').checked,
+      })
+    });
+    toast('Config applied');
+  } catch(e) {
+    toast('Config failed: ' + e.message, 'error');
+  }
+}
+
+async function drAddTid() {
+  const tid = document.getElementById('drAddTidInput').value.trim();
+  if (!tid) return toast('Enter TID', 'error');
+  try {
+    await api('/api/dr/add_tid', {
+      method: 'POST',
+      body: JSON.stringify({ tid: parseInt(tid) })
+    });
+    toast(`TID ${tid} added`);
+    document.getElementById('drAddTidInput').value = '';
+  } catch(e) {
+    toast('Add TID failed: ' + e.message, 'error');
+  }
+}
+
+async function drClear() {
+  if (!confirm('Clear all captured needles and dumps?')) return;
+  try {
+    await api('/api/dr/clear', { method: 'POST' });
+    drCapturedNeedles = [];
+    document.getElementById('drNeedleCount').textContent = '0';
+    renderNeedles([]);
+    document.getElementById('drDumpCard').style.display = 'none';
+    document.getElementById('drStatusCard').style.display = 'none';
+    toast('Data cleared');
+  } catch(e) {
+    toast('Clear failed: ' + e.message, 'error');
+  }
+}
+
+function drToggleAutoRefresh() {
+  const cb = document.getElementById('drAutoRefresh');
+  const label = document.getElementById('drAutoRefreshLabel');
+  if (cb.checked) {
+    drAutoRefreshTimer = setInterval(() => {
+      drRefreshNeedles();
+      drRefreshStatus();
+    }, 3000);
+    label.textContent = 'every 3s';
+  } else {
+    clearInterval(drAutoRefreshTimer);
+    drAutoRefreshTimer = null;
+    label.textContent = 'off';
+  }
+}
+
+async function drGenPatch() {
+  if (!drCapturedNeedles.length) return toast('No needles captured yet', 'error');
+  const mode = document.getElementById('drPatchMode').value;
+  const pc = drCapturedNeedles[0]?.pc || '0x0';
+  try {
+    const res = await api('/api/dr/frida_patch', {
+      method: 'POST',
+      body: JSON.stringify({ needles: drCapturedNeedles, pc, mode })
+    });
+    const el = document.getElementById('drPatchOutput');
+    el.style.display = 'block';
+    el.textContent = res.script;
+    toast(`Frida patch generated (${mode})`);
+  } catch(e) {
+    toast('Generate failed: ' + e.message, 'error');
+  }
+}
+
+function drNeedleToFrida(idx) {
+  const n = drCapturedNeedles[idx];
+  if (!n) return;
+  // Switch to Frida Generator tab with pre-filled info
+  document.querySelector('[data-tab="frida"]').click();
+  const output = document.getElementById('fridaOutput');
+  if (output) {
+    output.textContent = [
+      `// === Quick hook for needle: "${n.value}" ===`,
+      `// Captured at PC: ${n.pc}  LR: ${n.lr}`,
+      `// Thread: ${n.comm} (TID: ${n.tid})  Syscall: #${n.syscall_nr}`,
+      ``,
+      `var detectPC = ptr("${n.pc}");`,
+      `var detectLR = ptr("${n.lr}");`,
+      ``,
+      `// Option 1: Hook at the detection function PC`,
+      `Interceptor.attach(detectPC, {`,
+      `    onEnter: function(args) {`,
+      `        console.log("[*] Detection function called!");`,
+      `        console.log("    x0=" + this.context.x0 + " x1=" + this.context.x1);`,
+      `        // Force the function to "not find" anything:`,
+      `        // this.replace(new NativeCallback(function() { return 0; }, 'int', []));`,
+      `    }`,
+      `});`,
+      ``,
+      `// Option 2: Overwrite the needle string in memory`,
+      n.addr ? `try {` : '',
+      n.addr ? `    var needleAddr = ptr("${n.addr}");` : '',
+      n.addr ? `    Memory.writeUtf8String(needleAddr, "${'X'.repeat(n.value.length)}");` : '',
+      n.addr ? `    console.log("[*] Patched \"${n.value}\" at " + needleAddr);` : '',
+      n.addr ? `} catch(e) { console.log("Patch failed: " + e); }` : '',
+    ].filter(Boolean).join('\n');
+  }
+}
+
+function jumpToDisasm(addr) {
+  if (!addr || addr === '-') return;
+  const addrClean = addr.startsWith('0x') ? addr : '0x' + addr;
+  // Switch to Disassembler tab
+  document.querySelector('[data-tab="disasm"]').click();
+  const addrInput = document.getElementById('disasmAddr');
+  if (addrInput) {
+    addrInput.value = addrClean;
+    // Auto-trigger disassembly
+    if (typeof doDisasm === 'function') doDisasm();
+  }
+}
+
+async function drRunRaw() {
+  const cmd = document.getElementById('drRawCmd').value;
+  const el = document.getElementById('drRawOutput');
+  el.style.display = 'block';
+  el.textContent = 'Executing...';
+  try {
+    // Map cmd to API endpoint
+    let res;
+    if (cmd === 'dr_needles') {
+      res = await api('/api/dr/needles');
+      el.textContent = res.raw || JSON.stringify(res, null, 2);
+    } else if (cmd === 'dr_status') {
+      res = await api('/api/dr/status');
+      el.textContent = res.raw || JSON.stringify(res, null, 2);
+    } else if (cmd.startsWith('dr_dump')) {
+      const idx = cmd.split(' ')[1] || '0';
+      res = await api(`/api/dr/dump/${idx}`);
+      el.textContent = res.raw || JSON.stringify(res, null, 2);
+    }
+  } catch(e) {
+    el.textContent = 'Error: ' + e.message;
+  }
+}
+
+
+// ── Tab Navigation ──
+document.querySelectorAll('.tab-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+    btn.classList.add('active');
+    document.getElementById(`tab-${btn.dataset.tab}`).classList.add('active');
+  });
+});
+
+// ═══════════════════════════════════════════════
+//  Maps Analyzer
+// ═══════════════════════════════════════════════
+async function loadMaps() {
+  const pid = getPid();
+  if (!pid) { toast('Please enter a PID','error'); return; }
+  document.getElementById('mapsLoading').style.display = 'block';
+  document.getElementById('mapsList').innerHTML = '';
+  try {
+    const data = await api(`/api/mem/maps/${pid}/smart`);
+    state.maps = data.regions || [];
+    state.mapsRaw = [...state.maps];
+    updateMapsStats(data);
+    renderMaps(state.maps);
+    toast(`Loaded ${state.maps.length} regions`);
+    setConnected(true);
+  } catch(e) {
+    document.getElementById('mapsList').innerHTML = `<div class="error-msg">${e.message}</div>`;
+    setConnected(false);
+  } finally {
+    document.getElementById('mapsLoading').style.display = 'none';
+  }
+}
+
+function updateMapsStats(data) {
+  const s = data.summary || {};
+  document.getElementById('mapsStats').innerHTML = `
+    Total: <span>${state.maps.length}</span> regions |
+    Executable: <span>${state.maps.filter(r=>r.perms&&r.perms.includes('x')).length}</span> |
+    Suspicious: <span style="color:var(--accent-orange)">${(data.suspicious||[]).length}</span> |
+    Libraries: <span>${new Set(state.maps.filter(r=>r.name&&r.name.includes('.so')).map(r=>r.name.split('/').pop())).size}</span> |
+    Total Size: <span>${formatSize(state.maps.reduce((a,r)=>a+(r.size||0),0))}</span>
+  `;
+}
+
+function renderMaps(regions) {
+  const container = document.getElementById('mapsList');
+  if (!regions.length) {
+    container.innerHTML = '<div style="color:var(--text-muted);padding:20px;text-align:center;">No matching regions</div>';
+    return;
+  }
+  container.innerHTML = regions.map((r, i) => {
+    const suspicious = r.suspicious || r.tags?.length > 0;
+    const dangerous = r.perms?.includes('rwx') || r.tags?.some(t => t.includes('RWX') || t.includes('VMP'));
+    const permClass = r.perms?.includes('rwx') ? 'rwx' : r.perms?.includes('x') ? 'rx' : r.perms?.includes('w') ? 'rw' : 'r';
+    const tags = (r.tags || []).map(t => {
+      const cls = t.includes('RWX')||t.includes('VMP')||t.includes('Frida') ? 'badge-red' :
+                  t.includes('suspicious')||t.includes('anon') ? 'badge-orange' :
+                  t.includes('exec') ? 'badge-green' : 'badge-blue';
+      return `<span class="badge ${cls}">${escHtml(t)}</span>`;
+    }).join('');
+    return `
+    <div class="maps-region ${dangerous?'dangerous':suspicious?'suspicious':''}" data-idx="${i}">
+      <div class="maps-region-header" onclick="toggleMapDetail(${i})">
+        <span class="maps-region-addr">${r.start_hex||'?'} - ${r.end_hex||'?'}</span>
+        <span class="maps-region-perms ${permClass}">${r.perms||'?'}</span>
+        <span class="maps-region-name">${escHtml(r.name||'[anonymous]')}</span>
+        <span class="maps-region-size">${formatSize(r.size||0)}</span>
+        <span class="maps-region-tags">${tags}</span>
+      </div>
+      <div class="maps-region-detail" id="mapDetail${i}">
+        <div class="grid-3" style="margin-bottom:8px;">
+          <div><b style="color:var(--text-muted);">Offset:</b> <span class="mono">${r.offset||'0'}</span></div>
+          <div><b style="color:var(--text-muted);">Device:</b> <span class="mono">${r.dev||'-'}</span></div>
+          <div><b style="color:var(--text-muted);">Inode:</b> <span class="mono">${r.inode||'0'}</span></div>
+        </div>
+        ${r.reason ? `<div style="margin-bottom:8px;"><b style="color:var(--accent-orange);">⚠️ Why suspicious:</b> ${escHtml(r.reason)}</div>` : ''}
+        <div style="display:flex;gap:6px;flex-wrap:wrap;">
+          <button class="btn btn-sm" onclick="jumpToMemory('${r.start_hex}')">🔍 View Memory</button>
+          <button class="btn btn-sm" onclick="jumpToDisasm('${r.start_hex}')">⚙️ Disassemble</button>
+          <button class="btn btn-sm" onclick="jumpToStrings('${r.start_hex}', ${r.size||4096})">📝 Scan Strings</button>
+          ${r.perms?.includes('x') ? `<button class="btn btn-sm" onclick="jumpToSvcScan('${r.start_hex}', ${r.size||4096})">🎯 Scan SVC</button>` : ''}
+          <button class="btn btn-sm" onclick="genFridaForRegion('${r.start_hex}', ${r.size||4096}, '${escHtml(r.name||'region')}')">🔧 Frida Script</button>
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function toggleMapDetail(idx) {
+  const el = document.getElementById(`mapDetail${idx}`);
+  el.classList.toggle('open');
+}
+
+// Maps filter chips
+document.querySelectorAll('.maps-filter-chip').forEach(chip => {
+  chip.addEventListener('click', () => {
+    document.querySelectorAll('.maps-filter-chip').forEach(c => c.classList.remove('active'));
+    chip.classList.add('active');
+    applyMapsFilter(chip.dataset.filter);
+  });
+});
+
+document.getElementById('mapsSearch').addEventListener('input', () => {
+  const active = document.querySelector('.maps-filter-chip.active');
+  applyMapsFilter(active?.dataset.filter || 'all');
+});
+
+function applyMapsFilter(filter) {
+  let regions = [...state.mapsRaw];
+  const search = document.getElementById('mapsSearch').value.toLowerCase();
+
+  if (filter === 'suspicious') regions = regions.filter(r => r.suspicious || r.tags?.length > 0);
+  else if (filter === 'executable') regions = regions.filter(r => r.perms?.includes('x'));
+  else if (filter === 'rwx') regions = regions.filter(r => r.perms?.includes('rwx'));
+  else if (filter === 'anon') regions = regions.filter(r => !r.name || r.name === '' || r.name === '[anonymous]');
+  else if (filter === 'stack') regions = regions.filter(r => r.name?.includes('[stack') || r.name?.includes('[heap'));
+  else if (filter === 'lib') regions = regions.filter(r => r.name?.includes('.so'));
+  else if (filter === 'vmp') regions = regions.filter(r => r.tags?.some(t => t.toLowerCase().includes('vmp') || t.toLowerCase().includes('pack') || t.toLowerCase().includes('xjd')));
+
+  if (search) {
+    regions = regions.filter(r =>
+      (r.name||'').toLowerCase().includes(search) ||
+      (r.start_hex||'').toLowerCase().includes(search) ||
+      (r.tags||[]).some(t => t.toLowerCase().includes(search))
+    );
+  }
+  state.maps = regions;
+  renderMaps(regions);
+}
+
+// ═══════════════════════════════════════════════
+//  Memory Viewer
+// ═══════════════════════════════════════════════
+async function readMemory() {
+  const pid = getPid();
+  const addr = document.getElementById('memAddr').value.trim();
+  const size = parseInt(document.getElementById('memSize').value) || 256;
+  if (!pid || !addr) { toast('PID and address required','error'); return; }
+
+  document.getElementById('hexDisplay').innerHTML = '<div class="loading">Reading memory...</div>';
+  try {
+    const data = await api(`/api/mem/read/${pid}`, {
+      method: 'POST',
+      body: JSON.stringify({ address: addr, size })
+    });
+    state.currentMemAddr = addr;
+    state.currentMemData = data;
+    renderHexDump(data);
+    updateRegionInfo(addr);
+    updateDataInterpret(data);
+  } catch(e) {
+    document.getElementById('hexDisplay').innerHTML = `<div class="error-msg">${e.message}</div>`;
+  }
+}
+
+function readMemoryPrev() {
+  if (!state.currentMemAddr) return;
+  const size = parseInt(document.getElementById('memSize').value) || 256;
+  const addr = BigInt(state.currentMemAddr) - BigInt(size);
+  document.getElementById('memAddr').value = '0x' + addr.toString(16);
+  readMemory();
+}
+
+function readMemoryNext() {
+  if (!state.currentMemAddr) return;
+  const size = parseInt(document.getElementById('memSize').value) || 256;
+  const addr = BigInt(state.currentMemAddr) + BigInt(size);
+  document.getElementById('memAddr').value = '0x' + addr.toString(16);
+  readMemory();
+}
+
+function renderHexDump(data) {
+  const lines = data.lines || [];
+  if (!lines.length) {
+    document.getElementById('hexDisplay').innerHTML = '<div style="color:var(--text-muted);padding:20px;">No data</div>';
+    return;
+  }
+  const html = lines.map(line => {
+    const bytesHtml = (line.bytes || line.hex || '').replace(/([0-9a-f]{2})/gi, (m) => {
+      const v = parseInt(m, 16);
+      if (v === 0) return `<span style="color:var(--text-muted)">${m}</span>`;
+      return m;
+    });
+    const asciiHtml = (line.ascii || '').split('').map(c => {
+      if (c === '.') return `<span class="non-print">.</span>`;
+      return c;
+    }).join('');
+    return `<div class="hex-line"><span class="hex-addr">${line.addr || line.address || ''}</span><span class="hex-bytes">${bytesHtml}</span><span class="hex-ascii">${asciiHtml}</span></div>`;
+  }).join('');
+  document.getElementById('hexDisplay').innerHTML = html;
+}
+
+async function updateRegionInfo(addr) {
+  const pid = getPid();
+  try {
+    const data = await api(`/api/mem/resolve/${pid}/${addr}`);
+    const info = data.region || {};
+    document.getElementById('memRegionInfo').innerHTML = `
+      <div style="margin-bottom:4px;"><b>Library:</b> ${escHtml(info.name||'[unknown]')}</div>
+      <div style="margin-bottom:4px;"><b>Region:</b> ${info.start||'?'} - ${info.end||'?'}</div>
+      <div style="margin-bottom:4px;"><b>Permissions:</b> <span class="maps-region-perms ${info.perms?.includes('x')?'rx':'rw'}">${info.perms||'?'}</span></div>
+      <div style="margin-bottom:4px;"><b>Offset in region:</b> <span class="mono">+${info.offset_in_region||'?'}</span></div>
+    `;
+  } catch(e) {
+    document.getElementById('memRegionInfo').innerHTML = `<span style="color:var(--text-muted);">Could not resolve: ${e.message}</span>`;
+  }
+}
+
+function updateDataInterpret(data) {
+  const raw = data.raw_hex || data.hex || '';
+  if (!raw) { document.getElementById('dataInterpret').textContent = '—'; return; }
+  const bytes = raw.match(/.{1,2}/g)?.map(b => parseInt(b, 16)) || [];
+  let html = '';
+  // First 8 bytes as various types
+  if (bytes.length >= 4) {
+    const u32 = bytes[0] | (bytes[1]<<8) | (bytes[2]<<16) | (bytes[3]<<24);
+    html += `<div><b style="color:var(--text-muted)">UInt32 LE:</b> ${u32 >>> 0} (0x${(u32>>>0).toString(16)})</div>`;
+    html += `<div><b style="color:var(--text-muted)">Int32 LE:</b> ${u32}</div>`;
+  }
+  if (bytes.length >= 8) {
+    const lo = bytes[0] | (bytes[1]<<8) | (bytes[2]<<16) | (bytes[3]<<24);
+    const hi = bytes[4] | (bytes[5]<<8) | (bytes[6]<<16) | (bytes[7]<<24);
+    html += `<div><b style="color:var(--text-muted)">UInt64 LE:</b> 0x${(hi>>>0).toString(16).padStart(8,'0')}${(lo>>>0).toString(16).padStart(8,'0')}</div>`;
+  }
+  if (bytes.length >= 4) {
+    const buf = new ArrayBuffer(4);
+    const view = new DataView(buf);
+    view.setUint8(0, bytes[0]); view.setUint8(1, bytes[1]); view.setUint8(2, bytes[2]); view.setUint8(3, bytes[3]);
+    html += `<div><b style="color:var(--text-muted)">Float32:</b> ${view.getFloat32(0, true).toFixed(6)}</div>`;
+  }
+  // ASCII
+  const ascii = bytes.slice(0, 32).map(b => (b >= 32 && b < 127) ? String.fromCharCode(b) : '.').join('');
+  html += `<div style="margin-top:4px"><b style="color:var(--text-muted)">ASCII:</b> <span style="color:var(--accent-green)">${escHtml(ascii)}</span></div>`;
+  // ARM64 instruction (if 4 bytes)
+  if (bytes.length >= 4) {
+    const inst = (bytes[0] | (bytes[1]<<8) | (bytes[2]<<16) | (bytes[3]<<24)) >>> 0;
+    html += `<div><b style="color:var(--text-muted)">ARM64 inst:</b> 0x${inst.toString(16).padStart(8,'0')}`;
+    if (inst === 0xd4000001) html += ` <span style="color:var(--accent-red);font-weight:700"> ← SVC #0</span>`;
+    else if ((inst & 0xffe00000) === 0xd4200000) html += ` <span style="color:var(--accent-orange)"> ← BRK</span>`;
+    else if (inst === 0xd65f03c0) html += ` <span style="color:var(--accent-orange)"> ← RET</span>`;
+    else if ((inst & 0xfffffc1f) === 0xd63f0000) html += ` <span style="color:var(--accent-purple)"> ← BLR</span>`;
+    else if ((inst & 0xfffffc1f) === 0xd61f0000) html += ` <span style="color:var(--accent-purple)"> ← BR</span>`;
+    html += `</div>`;
+  }
+  document.getElementById('dataInterpret').innerHTML = html;
+}
+
+// ═══════════════════════════════════════════════
+//  Disassembler
+// ═══════════════════════════════════════════════
+async function disassemble() {
+  const pid = getPid();
+  const addr = document.getElementById('disasmAddr').value.trim();
+  const count = parseInt(document.getElementById('disasmCount').value) || 50;
+  if (!pid || !addr) { toast('PID and address required','error'); return; }
+
+  document.getElementById('disasmDisplay').innerHTML = '<div class="loading">Disassembling...</div>';
+  try {
+    const data = await api(`/api/mem/disasm/${pid}`, {
+      method: 'POST',
+      body: JSON.stringify({ address: addr, count })
+    });
+    state.currentDisasmAddr = addr;
+    renderDisasm(data.instructions || []);
+    document.getElementById('disasmRange').textContent = `${data.start_addr||addr} — ${data.instructions?.length||0} instructions`;
+  } catch(e) {
+    document.getElementById('disasmDisplay').innerHTML = `<div class="error-msg">${e.message}</div>`;
+  }
+}
+
+function disasmPrev() {
+  if (!state.currentDisasmAddr) return;
+  const count = parseInt(document.getElementById('disasmCount').value) || 50;
+  const addr = BigInt(state.currentDisasmAddr) - BigInt(count * 4);
+  document.getElementById('disasmAddr').value = '0x' + addr.toString(16);
+  disassemble();
+}
+
+function disasmNext() {
+  if (!state.currentDisasmAddr) return;
+  const count = parseInt(document.getElementById('disasmCount').value) || 50;
+  const addr = BigInt(state.currentDisasmAddr) + BigInt(count * 4);
+  document.getElementById('disasmAddr').value = '0x' + addr.toString(16);
+  disassemble();
+}
+
+function renderDisasm(instructions) {
+  const highlight = document.getElementById('disasmHighlight').checked;
+  const container = document.getElementById('disasmDisplay');
+  if (!instructions.length) {
+    container.innerHTML = '<div style="color:var(--text-muted);padding:20px;">No instructions decoded</div>';
+    return;
+  }
+  container.innerHTML = instructions.map(inst => {
+    const mnem = (inst.mnemonic || inst.inst || '').toLowerCase();
+    let lineClass = '';
+    let instClass = '';
+    if (highlight) {
+      if (mnem.includes('svc')) { lineClass = 'svc'; instClass = 'svc'; }
+      else if (mnem.includes('brk')) { lineClass = 'brk'; instClass = 'brk'; }
+      else if (mnem === 'br' || mnem === 'blr') { lineClass = 'branch'; instClass = 'br'; }
+      else if (mnem === 'bl' || mnem === 'b' || mnem.startsWith('b.')) { instClass = 'bl'; }
+      else if (mnem === 'ret') { instClass = 'ret'; }
+      else if (mnem === 'nop') { instClass = 'nop'; }
+    }
+    return `<div class="disasm-line ${lineClass}">
+      <span class="disasm-addr">${inst.address || inst.addr || ''}</span>
+      <span class="disasm-bytes">${inst.bytes_hex || inst.bytes || ''}</span>
+      <span class="disasm-inst ${instClass}">${escHtml(inst.mnemonic || inst.inst || '???')}</span>
+      <span class="disasm-operands">${escHtml(inst.operands || inst.args || '')}</span>
+      ${inst.comment ? `<span class="disasm-comment">; ${escHtml(inst.comment)}</span>` : ''}
+    </div>`;
+  }).join('');
+}
+
+// ═══════════════════════════════════════════════
+//  String Scanner
+// ═══════════════════════════════════════════════
+async function scanStrings() {
+  const pid = getPid();
+  const addr = document.getElementById('strAddr').value.trim();
+  const size = parseInt(document.getElementById('strSize').value) || 65536;
+  const minLen = parseInt(document.getElementById('strMinLen').value) || 4;
+  if (!pid || !addr) { toast('PID and address required','error'); return; }
+
+  document.getElementById('strTableBody').innerHTML = '<tr><td colspan="5" class="loading">Scanning strings...</td></tr>';
+  try {
+    const data = await api(`/api/mem/strings/${pid}`, {
+      method: 'POST',
+      body: JSON.stringify({ address: addr, size, min_length: minLen })
+    });
+    state.allStrings = data.strings || [];
+    document.getElementById('strCount').textContent = state.allStrings.length;
+    renderStrings(state.allStrings);
+    toast(`Found ${state.allStrings.length} strings`);
+  } catch(e) {
+    document.getElementById('strTableBody').innerHTML = `<tr><td colspan="5"><div class="error-msg">${e.message}</div></td></tr>`;
+  }
+}
+
+function filterStrings() {
+  const q = document.getElementById('strFilter').value.toLowerCase();
+  const filtered = q ? state.allStrings.filter(s => s.value?.toLowerCase().includes(q) || s.addr?.toLowerCase().includes(q)) : state.allStrings;
+  document.getElementById('strCount').textContent = filtered.length;
+  renderStrings(filtered);
+}
+
+function renderStrings(strings) {
+  const tbody = document.getElementById('strTableBody');
+  if (!strings.length) {
+    tbody.innerHTML = '<tr><td colspan="5" style="color:var(--text-muted);text-align:center;padding:20px;">No strings found</td></tr>';
+    return;
+  }
+  tbody.innerHTML = strings.slice(0, 500).map(s => `
+    <tr>
+      <td class="addr">${s.addr || s.address || ''}</td>
+      <td>${s.length || s.value?.length || ''}</td>
+      <td class="str-val">${escHtml(s.value || s.string || '')}</td>
+      <td class="str-lib">${escHtml(s.library || '')}</td>
+      <td>
+        <button class="btn btn-sm" onclick="jumpToMemory('${s.addr||s.address||''}')">Hex</button>
+      </td>
+    </tr>
+  `).join('');
+  if (strings.length > 500) {
+    tbody.innerHTML += `<tr><td colspan="5" style="color:var(--text-muted);text-align:center;">Showing 500 of ${strings.length}...</td></tr>`;
+  }
+}
+
+// ═══════════════════════════════════════════════
+//  SVC Scanner
+// ═══════════════════════════════════════════════
+async function scanSvc() {
+  const pid = getPid();
+  const addr = document.getElementById('svcAddr').value.trim();
+  const size = parseInt(document.getElementById('svcSize').value) || 65536;
+  const ctx = parseInt(document.getElementById('svcContext').value) || 5;
+  if (!pid || !addr) { toast('PID and address required','error'); return; }
+
+  document.getElementById('svcResults').innerHTML = '<div class="loading">Scanning for SVC #0...</div>';
+  try {
+    const data = await api(`/api/mem/svc_scan/${pid}`, {
+      method: 'POST',
+      body: JSON.stringify({ address: addr, size, context: ctx })
+    });
+    const sites = data.sites || [];
+    document.getElementById('svcCount').textContent = sites.length;
+    renderSvcResults(sites);
+    toast(`Found ${sites.length} SVC sites`);
+  } catch(e) {
+    document.getElementById('svcResults').innerHTML = `<div class="error-msg">${e.message}</div>`;
+  }
+}
+
+async function scanSvcAllLibs() {
+  const pid = getPid();
+  if (!pid) { toast('Enter a PID first','error'); return; }
+  if (!state.mapsRaw.length) { toast('Load maps first','error'); return; }
+
+  const execRegions = state.mapsRaw.filter(r => r.perms?.includes('x'));
+  document.getElementById('svcResults').innerHTML = `<div class="loading">Scanning ${execRegions.length} executable regions...</div>`;
+
+  let allSites = [];
+  for (const r of execRegions) {
+    try {
+      const data = await api(`/api/mem/svc_scan/${pid}`, {
+        method: 'POST',
+        body: JSON.stringify({ address: r.start_hex, size: Math.min(r.size || 65536, 262144), context: 3 })
+      });
+      const sites = (data.sites || []).map(s => ({...s, library: r.name || '[anonymous]'}));
+      allSites = allSites.concat(sites);
+    } catch(e) { /* skip failed regions */ }
+  }
+  document.getElementById('svcCount').textContent = allSites.length;
+  renderSvcResults(allSites);
+  toast(`Found ${allSites.length} SVC sites across ${execRegions.length} regions`);
+}
+
+function renderSvcResults(sites) {
+  const container = document.getElementById('svcResults');
+  if (!sites.length) {
+    container.innerHTML = '<div style="color:var(--text-muted);padding:20px;text-align:center;">No SVC #0 instructions found</div>';
+    return;
+  }
+  container.innerHTML = sites.map((s, i) => `
+    <div class="svc-result">
+      <div class="svc-result-header" onclick="toggleSvcDetail(${i})">
+        <span class="svc-result-addr">SVC #0 @ ${s.address || s.addr || '?'}</span>
+        <span class="svc-result-lib">${escHtml(s.library || s.lib || '')}</span>
+        <span style="display:flex;gap:6px;">
+          <button class="btn btn-sm" onclick="event.stopPropagation();jumpToDisasm('${s.address||s.addr}')">Disasm</button>
+          <button class="btn btn-sm" onclick="event.stopPropagation();jumpToMemory('${s.address||s.addr}')">Hex</button>
+        </span>
+      </div>
+      <div class="svc-result-detail" id="svcDetail${i}">
+        ${s.context ? `<div class="disasm-container">${renderSvcContext(s.context)}</div>` : ''}
+      </div>
+    </div>
+  `).join('');
+}
+
+function toggleSvcDetail(idx) {
+  document.getElementById(`svcDetail${idx}`).classList.toggle('open');
+}
+
+function renderSvcContext(ctx) {
+  if (!ctx || !ctx.length) return '';
+  return ctx.map(inst => {
+    const mnem = (inst.mnemonic || inst.inst || '').toLowerCase();
+    let cls = '';
+    if (mnem.includes('svc')) cls = 'svc';
+    else if (mnem.includes('brk')) cls = 'brk';
+    else if (mnem === 'br' || mnem === 'blr') cls = 'branch';
+    return `<div class="disasm-line ${cls}">
+      <span class="disasm-addr">${inst.address||''}</span>
+      <span class="disasm-bytes">${inst.bytes_hex||''}</span>
+      <span class="disasm-inst ${cls}">${escHtml(inst.mnemonic||inst.inst||'')}</span>
+      <span class="disasm-operands">${escHtml(inst.operands||inst.args||'')}</span>
+    </div>`;
+  }).join('');
+}
+
+// ═══════════════════════════════════════════════
+//  Frida Script Generator
+// ═══════════════════════════════════════════════
+function selectFridaTemplate(el) {
+  document.querySelectorAll('.frida-template').forEach(t => t.classList.remove('selected'));
+  el.classList.add('selected');
+  state.fridaTemplate = el.dataset.tpl;
+  updateFridaParams();
+  generateFridaScript();
+}
+
+function updateFridaParams() {
+  const tpl = state.fridaTemplate;
+  const container = document.getElementById('fridaParams');
+  let html = '';
+  switch(tpl) {
+    case 'watchpoint':
+      html = `
+        <div style="margin-bottom:8px"><label class="mono" style="font-size:11px;color:var(--text-secondary)">Address:</label>
+        <input class="input" id="fp_addr" placeholder="0x7f12340000" style="width:100%" oninput="generateFridaScript()" /></div>
+        <div style="margin-bottom:8px"><label class="mono" style="font-size:11px;color:var(--text-secondary)">Size (bytes):</label>
+        <input class="input" id="fp_size" value="8" style="width:100%" oninput="generateFridaScript()" /></div>
+        <div><label class="mono" style="font-size:11px;color:var(--text-secondary)">Access type:</label>
+        <select class="select" id="fp_access" style="width:100%" onchange="generateFridaScript()">
+          <option value="rw">Read + Write</option><option value="w">Write only</option><option value="r">Read only</option>
+        </select></div>`;
+      break;
+    case 'dump':
+      html = `
+        <div style="margin-bottom:8px"><label class="mono" style="font-size:11px;color:var(--text-secondary)">Address:</label>
+        <input class="input" id="fp_addr" placeholder="0x7f12340000" style="width:100%" oninput="generateFridaScript()" /></div>
+        <div style="margin-bottom:8px"><label class="mono" style="font-size:11px;color:var(--text-secondary)">Size:</label>
+        <input class="input" id="fp_size" value="4096" style="width:100%" oninput="generateFridaScript()" /></div>
+        <div><label class="mono" style="font-size:11px;color:var(--text-secondary)">Output path:</label>
+        <input class="input" id="fp_path" value="/data/local/tmp/memdump.bin" style="width:100%" oninput="generateFridaScript()" /></div>`;
+      break;
+    case 'svc_intercept':
+      html = `
+        <div style="margin-bottom:8px"><label class="mono" style="font-size:11px;color:var(--text-secondary)">SVC Address:</label>
+        <input class="input" id="fp_addr" placeholder="0x7f12340000" style="width:100%" oninput="generateFridaScript()" /></div>
+        <div style="margin-bottom:8px"><label class="mono" style="font-size:11px;color:var(--text-secondary)">Module name (optional):</label>
+        <input class="input" id="fp_module" placeholder="libc.so" style="width:100%" oninput="generateFridaScript()" /></div>
+        <div><label><input type="checkbox" id="fp_log_args" checked onchange="generateFridaScript()" /> Log arguments (x0-x5, x8)</label></div>`;
+      break;
+    case 'string_decrypt':
+      html = `
+        <div style="margin-bottom:8px"><label class="mono" style="font-size:11px;color:var(--text-secondary)">Decrypt function address:</label>
+        <input class="input" id="fp_addr" placeholder="0x7f12340000" style="width:100%" oninput="generateFridaScript()" /></div>
+        <div style="margin-bottom:8px"><label class="mono" style="font-size:11px;color:var(--text-secondary)">Module name:</label>
+        <input class="input" id="fp_module" placeholder="libexec.so" style="width:100%" oninput="generateFridaScript()" /></div>
+        <div><label class="mono" style="font-size:11px;color:var(--text-secondary)">Buffer argument index (0-based):</label>
+        <input class="input" id="fp_argidx" value="0" style="width:100%" oninput="generateFridaScript()" /></div>`;
+      break;
+    case 'br_trace':
+      html = `
+        <div style="margin-bottom:8px"><label class="mono" style="font-size:11px;color:var(--text-secondary)">Module name:</label>
+        <input class="input" id="fp_module" placeholder="libexec.so" style="width:100%" oninput="generateFridaScript()" /></div>
+        <div style="margin-bottom:8px"><label class="mono" style="font-size:11px;color:var(--text-secondary)">Function address (start of range):</label>
+        <input class="input" id="fp_addr" placeholder="0x7f12340000" style="width:100%" oninput="generateFridaScript()" /></div>
+        <div><label class="mono" style="font-size:11px;color:var(--text-secondary)">Range size:</label>
+        <input class="input" id="fp_size" value="4096" style="width:100%" oninput="generateFridaScript()" /></div>`;
+      break;
+    case 'vmp_trace':
+      html = `
+        <div style="margin-bottom:8px"><label class="mono" style="font-size:11px;color:var(--text-secondary)">VM Entry address:</label>
+        <input class="input" id="fp_addr" placeholder="0x7f12340000" style="width:100%" oninput="generateFridaScript()" /></div>
+        <div style="margin-bottom:8px"><label class="mono" style="font-size:11px;color:var(--text-secondary)">Handler table address (optional):</label>
+        <input class="input" id="fp_table" placeholder="" style="width:100%" oninput="generateFridaScript()" /></div>
+        <div style="margin-bottom:8px"><label class="mono" style="font-size:11px;color:var(--text-secondary)">Module name:</label>
+        <input class="input" id="fp_module" placeholder="libexec.so" style="width:100%" oninput="generateFridaScript()" /></div>`;
+      break;
+    case 'custom':
+      html = `<div><textarea class="input" id="fp_custom" style="width:100%;min-height:200px;font-family:var(--mono);font-size:11px;" oninput="generateFridaScript()" placeholder="// Write your Frida script here"></textarea></div>`;
+      break;
+  }
+  container.innerHTML = html;
+}
+
+function generateFridaScript() {
+  const tpl = state.fridaTemplate;
+  let code = '';
+  const v = (id) => document.getElementById(id)?.value?.trim() || '';
+
+  switch(tpl) {
+    case 'watchpoint':
+      code = genFridaWatchpoint(v('fp_addr'), v('fp_size')||'8', v('fp_access')||'rw');
+      break;
+    case 'dump':
+      code = genFridaDump(v('fp_addr'), v('fp_size')||'4096', v('fp_path')||'/data/local/tmp/memdump.bin');
+      break;
+    case 'svc_intercept':
+      code = genFridaSvcIntercept(v('fp_addr'), v('fp_module'), document.getElementById('fp_log_args')?.checked);
+      break;
+    case 'string_decrypt':
+      code = genFridaStringDecrypt(v('fp_addr'), v('fp_module'), v('fp_argidx')||'0');
+      break;
+    case 'br_trace':
+      code = genFridaBrTrace(v('fp_module'), v('fp_addr'), v('fp_size')||'4096');
+      break;
+    case 'vmp_trace':
+      code = genFridaVmpTrace(v('fp_addr'), v('fp_table'), v('fp_module'));
+      break;
+    case 'custom':
+      code = v('fp_custom') || '// Custom Frida script\n';
+      break;
+  }
+  document.getElementById('fridaOutput').textContent = code;
+}
+
+function genFridaWatchpoint(addr, size, access) {
+  return `/**
+ * Memory Watchpoint Script
+ * Target: ${addr || '<address>'} (${size} bytes)
+ * Access: ${access}
+ * Usage: frida -U -p <PID> -l watchpoint.js
+ */
+'use strict';
+
+const TARGET_ADDR = ptr('${addr || '0x0'}');
+const TARGET_SIZE = ${size || 8};
+const ACCESS_TYPE = '${access}';
+
+// ── Color helpers ──
+const RED = '\\x1b[31m', GREEN = '\\x1b[32m', YELLOW = '\\x1b[33m';
+const CYAN = '\\x1b[36m', RESET = '\\x1b[0m';
+
+function hexdump_short(p, len) {
+    try { return hexdump(p, { length: Math.min(len, 64), ansi: true }); }
+    catch(e) { return '<unreadable>'; }
+}
+
+// ── Method 1: MemoryAccessMonitor (if available) ──
+if (typeof MemoryAccessMonitor !== 'undefined') {
+    console.log(CYAN + '[*] Using MemoryAccessMonitor' + RESET);
+    MemoryAccessMonitor.enable([{
+        base: TARGET_ADDR,
+        size: TARGET_SIZE
+    }], {
+        onAccess: function(details) {
+            const op = details.operation; // 'read' or 'write' or 'execute'
+            if (ACCESS_TYPE === 'w' && op === 'read') return;
+            if (ACCESS_TYPE === 'r' && op !== 'read') return;
+
+            const color = op === 'write' ? RED : op === 'read' ? GREEN : YELLOW;
+            console.log(color + '[' + op.toUpperCase() + '] ' + RESET +
+                'addr=' + details.address +
+                ' from=' + details.from +
+                ' page=' + details.pageIndex +
+                ' range=' + details.rangeIndex);
+
+            // Dump current value
+            console.log(hexdump_short(TARGET_ADDR, TARGET_SIZE));
+
+            // Print backtrace
+            console.log(YELLOW + 'Backtrace:' + RESET);
+            console.log(Thread.backtrace(details.from ? {pc: details.from, sp: ptr(0)} : undefined, Backtracer.ACCURATE)
+                .map(DebugSymbol.fromAddress).join('\\n'));
+        }
+    });
+} else {
+    // ── Method 2: Stalker-based tracing (fallback) ──
+    console.log(YELLOW + '[*] MemoryAccessMonitor unavailable, using Interceptor + polling' + RESET);
+
+    // Snapshot original value
+    let lastValue = TARGET_ADDR.readByteArray(TARGET_SIZE);
+    console.log(CYAN + '[*] Initial value:' + RESET);
+    console.log(hexdump_short(TARGET_ADDR, TARGET_SIZE));
+
+    // Poll for changes every 100ms
+    setInterval(function() {
+        try {
+            const current = TARGET_ADDR.readByteArray(TARGET_SIZE);
+            const lastArr = new Uint8Array(lastValue);
+            const currArr = new Uint8Array(current);
+            let changed = false;
+            for (let i = 0; i < currArr.length; i++) {
+                if (currArr[i] !== lastArr[i]) { changed = true; break; }
+            }
+            if (changed) {
+                console.log(RED + '[WRITE DETECTED] ' + RESET + new Date().toISOString());
+                console.log(YELLOW + 'Old:' + RESET);
+                console.log(hexdump(lastValue, { ansi: true }));
+                console.log(GREEN + 'New:' + RESET);
+                console.log(hexdump(current, { ansi: true }));
+
+                // Emit for external consumers (RPC)
+                send({
+                    type: 'memory_change',
+                    addr: TARGET_ADDR.toString(),
+                    old: Array.from(lastArr).map(b => b.toString(16).padStart(2, '0')).join(''),
+                    new_val: Array.from(currArr).map(b => b.toString(16).padStart(2, '0')).join(''),
+                    ts: Date.now()
+                });
+                lastValue = current;
+            }
+        } catch(e) {}
+    }, 100);
+}
+
+console.log(GREEN + '[✓] Watchpoint active on ' + TARGET_ADDR + ' (' + TARGET_SIZE + ' bytes)' + RESET);
+`;
+}
+
+function genFridaDump(addr, size, path) {
+  return `/**
+ * Memory Region Dump
+ * Dumps ${size} bytes from ${addr || '<address>'}
+ * Usage: frida -U -p <PID> -l dump.js
+ */
+'use strict';
+
+const BASE = ptr('${addr || '0x0'}');
+const SIZE = ${size || 4096};
+const OUT_PATH = '${path}';
+
+console.log('[*] Dumping ' + SIZE + ' bytes from ' + BASE);
+
+try {
+    const data = BASE.readByteArray(SIZE);
+    const f = new File(OUT_PATH, 'wb');
+    f.write(data);
+    f.flush();
+    f.close();
+    console.log('[✓] Dumped to ' + OUT_PATH);
+
+    // Also print hex preview
+    console.log('\\n── First 256 bytes ──');
+    console.log(hexdump(BASE, { length: Math.min(SIZE, 256), ansi: true }));
+
+    // Quick string scan
+    console.log('\\n── Strings found ──');
+    const bytes = new Uint8Array(data);
+    let str = '', strAddr = 0;
+    for (let i = 0; i < bytes.length; i++) {
+        if (bytes[i] >= 0x20 && bytes[i] < 0x7f) {
+            if (!str) strAddr = i;
+            str += String.fromCharCode(bytes[i]);
+        } else {
+            if (str.length >= 4) {
+                console.log(BASE.add(strAddr) + ': "' + str + '"');
+            }
+            str = '';
+        }
+    }
+    if (str.length >= 4) console.log(BASE.add(strAddr) + ': "' + str + '"');
+} catch(e) {
+    console.log('[!] Error: ' + e.message);
+}
+`;
+}
+
+function genFridaSvcIntercept(addr, module, logArgs) {
+  return `/**
+ * SVC #0 Interceptor
+ * ${addr ? 'Address: ' + addr : 'Hooks all SVC #0 in ' + (module || '<module>')}
+ * Usage: frida -U -p <PID> -l svc_intercept.js
+ */
+'use strict';
+
+const RED = '\\x1b[31m', GREEN = '\\x1b[32m', YELLOW = '\\x1b[33m';
+const CYAN = '\\x1b[36m', RESET = '\\x1b[0m';
+
+const SYSCALL_NAMES = {
+    0: 'io_setup', 56: 'openat', 57: 'close', 63: 'read', 64: 'write',
+    78: 'readlinkat', 93: 'exit', 94: 'exit_group', 172: 'getpid',
+    174: 'getuid', 178: 'gettid', 220: 'clone', 221: 'execve',
+    260: 'wait4', 281: 'execveat'
+};
+
+function getSyscallName(nr) {
+    return SYSCALL_NAMES[nr] || ('syscall_' + nr);
+}
+
+${addr ? `
+// Hook specific address
+Interceptor.attach(ptr('${addr}'), {
+    onEnter(args) {
+        const nr = this.context.x8.toInt32();
+        console.log(RED + '[SVC #0] ' + RESET +
+            'nr=' + nr + ' (' + getSyscallName(nr) + ') ' +
+            'at ' + ptr('${addr}'));
+        ${logArgs ? `
+        console.log('  x0=' + this.context.x0 +
+            ' x1=' + this.context.x1 +
+            ' x2=' + this.context.x2);
+        console.log('  x3=' + this.context.x3 +
+            ' x4=' + this.context.x4 +
+            ' x5=' + this.context.x5);
+        console.log('  x8=' + this.context.x8 + ' (syscall nr)');
+        ` : ''}
+        console.log(YELLOW + '  Backtrace:' + RESET);
+        console.log('  ' + Thread.backtrace(this.context, Backtracer.ACCURATE)
+            .map(DebugSymbol.fromAddress).join('\\n  '));
+    },
+    onLeave(retval) {
+        console.log(GREEN + '  → return: ' + retval + RESET);
+    }
+});
+` : `
+// Scan module for SVC #0 and hook all
+const mod = Process.findModuleByName('${module || 'libc.so'}');
+if (!mod) { console.log('[!] Module not found'); }
+else {
+    console.log('[*] Scanning ' + mod.name + ' (' + mod.base + ', ' + mod.size + ' bytes)');
+    const SVC_PATTERN = '01 00 00 d4'; // SVC #0 (little-endian)
+    Memory.scan(mod.base, mod.size, SVC_PATTERN, {
+        onMatch(address, size) {
+            console.log('[*] Found SVC #0 at ' + address);
+            try {
+                Interceptor.attach(address, {
+                    onEnter(args) {
+                        const nr = this.context.x8.toInt32();
+                        console.log(RED + '[SVC] ' + RESET + address +
+                            ' nr=' + nr + ' (' + getSyscallName(nr) + ')');
+                        ${logArgs ? `console.log('  args: x0=' + this.context.x0 + ' x1=' + this.context.x1 + ' x2=' + this.context.x2);` : ''}
+                    }
+                });
+            } catch(e) {
+                console.log('[!] Cannot hook ' + address + ': ' + e.message);
+            }
+        },
+        onComplete() { console.log(GREEN + '[✓] SVC scan complete' + RESET); }
+    });
+}
+`}
+console.log(GREEN + '[✓] SVC interceptor active' + RESET);
+`;
+}
+
+function genFridaStringDecrypt(addr, module, argIdx) {
+  return `/**
+ * String Decryption Tracer
+ * Traces decrypt function and dumps output buffer
+ * Usage: frida -U -p <PID> -l string_decrypt.js
+ */
+'use strict';
+
+const DECRYPT_FUNC = ptr('${addr || '0x0'}');
+const BUFFER_ARG_IDX = ${argIdx || 0};
+let callCount = 0;
+
+Interceptor.attach(DECRYPT_FUNC, {
+    onEnter(args) {
+        this.buf = args[BUFFER_ARG_IDX];
+        this.callId = ++callCount;
+        console.log('\\n[#' + this.callId + '] decrypt() called');
+        console.log('  arg0=' + args[0] + ' arg1=' + args[1] + ' arg2=' + args[2]);
+
+        // Dump input buffer
+        if (this.buf && !this.buf.isNull()) {
+            console.log('  Input buffer:');
+            try { console.log(hexdump(this.buf, { length: 64, ansi: true })); }
+            catch(e) { console.log('  <unreadable>'); }
+        }
+    },
+    onLeave(retval) {
+        console.log('[#' + this.callId + '] decrypt() returned: ' + retval);
+
+        // Dump output (likely the decrypted string)
+        if (this.buf && !this.buf.isNull()) {
+            try {
+                const str = this.buf.readUtf8String();
+                if (str && str.length > 0 && str.length < 1024) {
+                    console.log('  \\x1b[32mDecrypted: "' + str + '"\\x1b[0m');
+                }
+            } catch(e) {}
+            try { console.log(hexdump(this.buf, { length: 64, ansi: true })); }
+            catch(e) {}
+        }
+
+        // Also check return value as pointer to string
+        if (!retval.isNull()) {
+            try {
+                const rs = retval.readUtf8String();
+                if (rs && rs.length > 0 && rs.length < 1024) {
+                    console.log('  \\x1b[33mReturn string: "' + rs + '"\\x1b[0m');
+                }
+            } catch(e) {}
+        }
+
+        send({ type: 'decrypted_string', callId: this.callId, result: retval.toString() });
+    }
+});
+
+console.log('\\x1b[32m[✓] String decrypt tracer on ' + DECRYPT_FUNC + '\\x1b[0m');
+`;
+}
+
+function genFridaBrTrace(module, addr, size) {
+  return `/**
+ * BR Obfuscation Tracer (Indirect Branch Tracing)
+ * Uses Stalker to trace all BR Xn instructions
+ * Module: ${module || '<module>'}, Range: ${addr || '<addr>'} + ${size}
+ * Usage: frida -U -p <PID> -l br_trace.js
+ */
+'use strict';
+
+const MOD_NAME = '${module || 'libexec.so'}';
+const RANGE_START = ptr('${addr || '0x0'}');
+const RANGE_SIZE = ${size || 4096};
+
+const mod = Process.findModuleByName(MOD_NAME);
+if (!mod) {
+    console.log('[!] Module ' + MOD_NAME + ' not found');
+} else {
+    console.log('[*] Tracing BR instructions in ' + MOD_NAME);
+    console.log('[*] Base: ' + mod.base + ', Size: ' + mod.size);
+
+    const branches = [];
+    const tid = Process.getCurrentThreadId();
+
+    Stalker.follow(tid, {
+        transform(iterator) {
+            let inst;
+            while ((inst = iterator.next()) !== null) {
+                const addr = inst.address;
+                // Check if within our range
+                if (addr.compare(RANGE_START) >= 0 &&
+                    addr.compare(RANGE_START.add(RANGE_SIZE)) < 0) {
+
+                    const mnemonic = inst.mnemonic;
+                    if (mnemonic === 'br' || mnemonic === 'blr') {
+                        iterator.putCallout(function(context) {
+                            const pc = context.pc;
+                            // Read the register value (target of BR)
+                            // BR Xn - register is encoded in bits [9:5]
+                            const encoding = pc.readU32();
+                            const regIdx = (encoding >> 5) & 0x1f;
+                            const target = context['x' + regIdx] || context.pc;
+                            const sym = DebugSymbol.fromAddress(ptr(target));
+
+                            console.log('\\x1b[35m[BR] \\x1b[0m' + pc +
+                                ' → ' + ptr(target) +
+                                ' (' + sym.toString() + ')' +
+                                ' reg=x' + regIdx);
+                            branches.push({
+                                from: pc.toString(),
+                                to: ptr(target).toString(),
+                                reg: 'x' + regIdx
+                            });
+                        });
+                    }
+                }
+                iterator.keep();
+            }
+        }
+    });
+
+    // Dump collected branches on script unload
+    Script.bindWeak(Script, function() {
+        console.log('\\n── BR Trace Summary ──');
+        console.log('Total indirect branches: ' + branches.length);
+        const targets = {};
+        branches.forEach(b => {
+            targets[b.to] = (targets[b.to] || 0) + 1;
+        });
+        Object.entries(targets)
+            .sort((a,b) => b[1] - a[1])
+            .forEach(([addr, count]) => {
+                console.log('  ' + addr + ' ← ' + count + ' hits (' +
+                    DebugSymbol.fromAddress(ptr(addr)) + ')');
+            });
+    });
+}
+
+console.log('\\x1b[32m[✓] BR trace active\\x1b[0m');
+`;
+}
+
+function genFridaVmpTrace(addr, table, module) {
+  return `/**
+ * VMP Handler Tracer
+ * Traces VM interpreter dispatch loop
+ * Entry: ${addr || '<addr>'}, Handler table: ${table || 'auto-detect'}
+ * Usage: frida -U -p <PID> -l vmp_trace.js
+ */
+'use strict';
+
+const VM_ENTRY = ptr('${addr || '0x0'}');
+const HANDLER_TABLE = ${table ? "ptr('" + table + "')" : 'null'};
+const MOD_NAME = '${module || 'libexec.so'}';
+
+const mod = Process.findModuleByName(MOD_NAME);
+if (!mod) { console.log('[!] Module not found'); }
+
+// ── Strategy 1: Hook VM entry to capture context ──
+let vmContext = null;
+Interceptor.attach(VM_ENTRY, {
+    onEnter(args) {
+        vmContext = {
+            x0: this.context.x0,
+            x1: this.context.x1,
+            x2: this.context.x2,
+            sp: this.context.sp,
+            lr: this.context.lr
+        };
+        console.log('\\x1b[36m[VM Entry]\\x1b[0m');
+        console.log('  x0=' + args[0] + ' x1=' + args[1] + ' x2=' + args[2]);
+        console.log('  SP=' + this.context.sp + ' LR=' + this.context.lr);
+
+        // Dump potential bytecode (x0 or x1 often points to it)
+        [args[0], args[1]].forEach((p, i) => {
+            if (!p.isNull()) {
+                try {
+                    console.log('  arg' + i + ' dump:');
+                    console.log(hexdump(p, { length: 64, ansi: true }));
+                } catch(e) {}
+            }
+        });
+    },
+    onLeave(retval) {
+        console.log('\\x1b[32m[VM Exit]\\x1b[0m return=' + retval);
+    }
+});
+
+// ── Strategy 2: Trace handler dispatch via Stalker ──
+${table ? `
+console.log('[*] Reading handler table at ' + HANDLER_TABLE);
+const handlers = [];
+for (let i = 0; i < 256; i++) {
+    try {
+        const h = HANDLER_TABLE.add(i * Process.pointerSize).readPointer();
+        if (!h.isNull() && h.compare(mod.base) >= 0 &&
+            h.compare(mod.base.add(mod.size)) < 0) {
+            handlers.push({ opcode: i, handler: h });
+            Interceptor.attach(h, {
+                onEnter() {
+                    console.log('\\x1b[33m[OP 0x' + i.toString(16).padStart(2,'0') + ']\\x1b[0m → ' + h);
+                }
+            });
+        }
+    } catch(e) {}
+}
+console.log('[*] Hooked ' + handlers.length + ' VM handlers');
+` : `
+console.log('[*] No handler table specified. Using Stalker to trace all branches from VM entry.');
+console.log('[*] Tip: Look for a large BR Xn dispatch after reading an opcode byte.');
+console.log('[*] Common pattern: LDRB Wn, [Xm], #1 → LDR Xn, [Xtable, Xn, LSL#3] → BR Xn');
+`}
+
+console.log('\\x1b[32m[✓] VMP tracer active\\x1b[0m');
+`;
+}
+
+function copyFridaScript() {
+  const code = document.getElementById('fridaOutput').textContent;
+  navigator.clipboard.writeText(code).then(() => toast('Copied to clipboard!'));
+}
+
+function downloadFridaScript() {
+  const code = document.getElementById('fridaOutput').textContent;
+  const tpl = state.fridaTemplate;
+  const blob = new Blob([code], { type: 'text/javascript' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `frida_${tpl}.js`;
+  a.click();
+}
+
+// Initialize default template
+updateFridaParams();
+generateFridaScript();
+
+// ═══════════════════════════════════════════════
+//  Watchpoint Tab
+// ═══════════════════════════════════════════════
+function addWatchpoint() {
+  const addr = document.getElementById('watchAddr').value.trim();
+  const size = parseInt(document.getElementById('watchSize').value) || 8;
+  const type = document.getElementById('watchType').value;
+  if (!addr) { toast('Enter an address','error'); return; }
+
+  state.watchpoints.push({ addr, size, type, id: Date.now() });
+  renderWatchpoints();
+  toast('Watchpoint added');
+}
+
+function clearWatchpoints() {
+  state.watchpoints = [];
+  state.watchLog = [];
+  renderWatchpoints();
+  document.getElementById('watchLog').innerHTML = '<div style="color:var(--text-muted);">Cleared</div>';
+  document.getElementById('watchLogCount').textContent = '0';
+}
+
+function renderWatchpoints() {
+  const container = document.getElementById('watchActive');
+  if (!state.watchpoints.length) {
+    container.innerHTML = '<div style="color:var(--text-muted);">No watchpoints added</div>';
+    return;
+  }
+  container.innerHTML = state.watchpoints.map((wp, i) => `
+    <div class="watch-entry">
+      <span class="badge ${wp.type==='w'?'badge-red':wp.type==='r'?'badge-green':'badge-orange'}">${wp.type.toUpperCase()}</span>
+      <span class="addr">${wp.addr}</span>
+      <span style="color:var(--text-muted)">${wp.size} bytes</span>
+      <span style="flex:1"></span>
+      <button class="btn btn-sm btn-danger" onclick="removeWatchpoint(${i})">✕</button>
+    </div>
+  `).join('');
+}
+
+function removeWatchpoint(idx) {
+  state.watchpoints.splice(idx, 1);
+  renderWatchpoints();
+}
+
+function genWatchScript() {
+  if (!state.watchpoints.length) { toast('Add watchpoints first','error'); return; }
+
+  // Switch to Frida tab and generate a multi-address watchpoint script
+  const fridaTab = document.querySelector('[data-tab="frida"]');
+  fridaTab.click();
+
+  // Generate combined script
+  const addrs = state.watchpoints.map(wp =>
+    `  { addr: ptr('${wp.addr}'), size: ${wp.size}, type: '${wp.type}' }`
+  ).join(',\n');
+
+  const code = `/**
+ * Multi-Address Watchpoint Script
+ * Generated ${new Date().toISOString()}
+ * Watchpoints: ${state.watchpoints.length}
+ * Usage: frida -U -p <PID> -l multi_watch.js
+ */
+'use strict';
+
+const WATCHPOINTS = [
+${addrs}
+];
+
+WATCHPOINTS.forEach((wp, idx) => {
+    console.log('[*] Setting watchpoint #' + idx + ': ' + wp.addr + ' (' + wp.size + ' bytes, ' + wp.type + ')');
+
+    let lastValue = wp.addr.readByteArray(wp.size);
+    console.log('[*] Initial value #' + idx + ':');
+    console.log(hexdump(wp.addr, { length: Math.min(wp.size, 64), ansi: true }));
+
+    setInterval(() => {
+        try {
+            const current = wp.addr.readByteArray(wp.size);
+            const lastArr = new Uint8Array(lastValue);
+            const currArr = new Uint8Array(current);
+            let changed = false;
+            for (let i = 0; i < currArr.length; i++) {
+                if (currArr[i] !== lastArr[i]) { changed = true; break; }
+            }
+            if (changed) {
+                const ts = Date.now();
+                const oldHex = Array.from(lastArr).map(b => b.toString(16).padStart(2,'0')).join('');
+                const newHex = Array.from(currArr).map(b => b.toString(16).padStart(2,'0')).join('');
+
+                console.log('\\x1b[31m[CHANGE #' + idx + '] \\x1b[0m' + wp.addr + ' @ ' + new Date(ts).toISOString());
+                console.log(hexdump(current, { length: Math.min(wp.size, 64), ansi: true }));
+
+                // Send as JSON for external parsing
+                send(JSON.stringify({
+                    type: 'access', op: 'write',
+                    addr: wp.addr.toString(),
+                    old: oldHex, value: newHex,
+                    ts: ts, wp_idx: idx
+                }));
+
+                lastValue = current;
+            }
+        } catch(e) {}
+    }, 50);
+});
+
+console.log('\\x1b[32m[✓] ' + WATCHPOINTS.length + ' watchpoints active\\x1b[0m');
+`;
+
+  document.getElementById('fridaOutput').textContent = code;
+  state.fridaTemplate = 'custom';
+  toast('Watchpoint script generated');
+}
+
+function parseWatchPaste() {
+  const input = document.getElementById('watchPasteInput').value.trim();
+  if (!input) return;
+
+  const lines = input.split('\n');
+  const logContainer = document.getElementById('watchLog');
+  let count = 0;
+
+  lines.forEach(line => {
+    try {
+      const data = JSON.parse(line);
+      if (data.type === 'access' || data.type === 'memory_change') {
+        count++;
+        const cls = data.op === 'write' ? 'write' : data.op === 'read' ? 'read' : 'change';
+        const time = data.ts ? new Date(data.ts).toLocaleTimeString() : '?';
+        state.watchLog.push(data);
+
+        const entry = document.createElement('div');
+        entry.innerHTML = `<span class="${cls}">[${data.op?.toUpperCase()||'CHANGE'}]</span> ` +
+          `<span style="color:var(--accent-cyan)">${data.addr}</span> ` +
+          `<span style="color:var(--text-muted)">old:</span><span style="color:var(--accent-red)">${data.old||'?'}</span> ` +
+          `<span style="color:var(--text-muted)">→</span> ` +
+          `<span style="color:var(--accent-green)">${data.value||data.new_val||'?'}</span> ` +
+          `<span style="color:var(--text-muted)">${time}</span>`;
+        logContainer.appendChild(entry);
+      }
+    } catch(e) { /* skip non-JSON lines */ }
+  });
+
+  document.getElementById('watchLogCount').textContent = state.watchLog.length;
+  logContainer.scrollTop = logContainer.scrollHeight;
+  if (count > 0) toast(`Parsed ${count} events`);
+  else toast('No valid events found in input', 'error');
+}
+
+// ═══════════════════════════════════════════════
+//  Cross-tab Navigation
+// ═══════════════════════════════════════════════
+function jumpToMemory(addr) {
+  document.querySelector('[data-tab="memory"]').click();
+  document.getElementById('memAddr').value = addr;
+  readMemory();
+}
+function jumpToDisasm(addr) {
+  document.querySelector('[data-tab="disasm"]').click();
+  document.getElementById('disasmAddr').value = addr;
+  disassemble();
+}
+function jumpToStrings(addr, size) {
+  document.querySelector('[data-tab="strings"]').click();
+  document.getElementById('strAddr').value = addr;
+  document.getElementById('strSize').value = size || 65536;
+  scanStrings();
+}
+function jumpToSvcScan(addr, size) {
+  document.querySelector('[data-tab="svc-scan"]').click();
+  document.getElementById('svcAddr').value = addr;
+  document.getElementById('svcSize').value = size || 65536;
+  scanSvc();
+}
+function disasmAtAddr() {
+  const addr = document.getElementById('memAddr').value;
+  if (addr) jumpToDisasm(addr);
+}
+function stringsAtAddr() {
+  const addr = document.getElementById('memAddr').value;
+  if (addr) jumpToStrings(addr, parseInt(document.getElementById('memSize').value) || 256);
+}
+function scanSvcNear() {
+  const addr = document.getElementById('memAddr').value;
+  if (addr) jumpToSvcScan(addr, 4096);
+}
+function genFridaDump() {
+  const addr = document.getElementById('memAddr').value;
+  if (!addr) return;
+  document.querySelector('[data-tab="frida"]').click();
+  document.querySelector('[data-tpl="dump"]').click();
+  setTimeout(() => {
+    const el = document.getElementById('fp_addr');
+    if (el) { el.value = addr; generateFridaScript(); }
+  }, 50);
+}
+function watchAddr() {
+  const addr = document.getElementById('memAddr').value;
+  if (!addr) return;
+  document.querySelector('[data-tab="watchpoint"]').click();
+  document.getElementById('watchAddr').value = addr;
+  addWatchpoint();
+}
+function genFridaForRegion(addr, size, name) {
+  document.querySelector('[data-tab="frida"]').click();
+  document.querySelector('[data-tpl="dump"]').click();
+  setTimeout(() => {
+    const addrEl = document.getElementById('fp_addr');
+    const sizeEl = document.getElementById('fp_size');
+    if (addrEl) addrEl.value = addr;
+    if (sizeEl) sizeEl.value = size;
+    generateFridaScript();
+  }, 50);
+}
+
+// ═══════════════════════════════════════════════
+//  Utilities
+// ═══════════════════════════════════════════════
+function escHtml(s) {
+  if (!s) return '';
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+function formatSize(bytes) {
+  if (bytes >= 1024*1024*1024) return (bytes/(1024*1024*1024)).toFixed(1) + ' GB';
+  if (bytes >= 1024*1024) return (bytes/(1024*1024)).toFixed(1) + ' MB';
+  if (bytes >= 1024) return (bytes/1024).toFixed(1) + ' KB';
+  return bytes + ' B';
+}
+function setConnected(ok) {
+  document.getElementById('statusDot').className = ok ? 'status-dot connected' : 'status-dot';
+  document.getElementById('statusText').textContent = ok ? 'Connected' : 'Disconnected';
+}
+
+// ── Keyboard shortcuts ──
+document.addEventListener('keydown', e => {
+  if (e.ctrlKey && e.key === 'Enter') {
+    // Ctrl+Enter = execute current tab's primary action
+    const active = document.querySelector('.tab-content.active')?.id;
+    if (active === 'tab-maps') loadMaps();
+    else if (active === 'tab-memory') readMemory();
+    else if (active === 'tab-disasm') disassemble();
+    else if (active === 'tab-strings') scanStrings();
+    else if (active === 'tab-svc-scan') scanSvc();
+  }
+});
+</script>
+</body>
+</html>

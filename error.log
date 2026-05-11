@@ -1,0 +1,202 @@
+oriole:/ # 
+oriole:/ # dmesg | tail -n 200                                                                      
+[  107.091223] [14:48:35.771336][cfg80211][wlan] wl_get_usable_channels : idx:14 chanspec:d07c freq:5620 width:0 iface_mode_mask:1
+[  107.091241] [14:48:35.771354][cfg80211][wlan] wl_get_usable_channels : idx:15 chanspec:d080 freq:5640 width:0 iface_mode_mask:1
+[  107.091258] [14:48:35.771371][cfg80211][wlan] wl_get_usable_channels : idx:16 chanspec:d084 freq:5660 width:0 iface_mode_mask:1
+[  107.091276] [14:48:35.771389][cfg80211][wlan] wl_get_usable_channels : idx:17 chanspec:d088 freq:5680 width:0 iface_mode_mask:1
+[  107.091293] [14:48:35.771406][cfg80211][wlan] wl_get_usable_channels : idx:18 chanspec:d08c freq:5700 width:0 iface_mode_mask:1
+[  107.091311] [14:48:35.771424][cfg80211][wlan] wl_get_usable_channels : idx:19 chanspec:d090 freq:5720 width:0 iface_mode_mask:1
+[  107.091329] [14:48:35.771441][cfg80211][wlan] wl_get_usable_channels : idx:20 chanspec:d095 freq:5745 width:0 iface_mode_mask:1
+[  107.091346] [14:48:35.771459][cfg80211][wlan] wl_get_usable_channels : idx:21 chanspec:d099 freq:5765 width:0 iface_mode_mask:1
+[  107.091363] [14:48:35.771476][cfg80211][wlan] wl_get_usable_channels : idx:22 chanspec:d09d freq:5785 width:0 iface_mode_mask:1
+[  107.091381] [14:48:35.771494][cfg80211][wlan] wl_get_usable_channels : idx:23 chanspec:d0a1 freq:5805 width:0 iface_mode_mask:1
+[  107.091399] [14:48:35.771512][cfg80211][wlan] wl_get_usable_channels : idx:24 chanspec:d0a5 freq:5825 width:0 iface_mode_mask:1
+[  107.091431] [14:48:35.771544][cfg80211][wlan] wl_get_usable_channels : Cur interface STA:1(chspec:d02c) AP:0 P2P GO:0 GC:0 NAN:0
+[  107.101807] [14:48:35.781915][cfg80211][wlan] wl_cfgvendor_get_usable_channels : usable channel param band:1 iface:1 filter:3 max_size:256
+[  107.117103] [14:48:35.797213][cfg80211][wlan] wl_get_usable_channels : idx:0 chanspec:1001 freq:2412 width:0 iface_mode_mask:1
+[  107.117124] [14:48:35.797238][cfg80211][wlan] wl_get_usable_channels : idx:1 chanspec:1002 freq:2417 width:0 iface_mode_mask:1
+[  107.117132] [14:48:35.797246][cfg80211][wlan] wl_get_usable_channels : idx:2 chanspec:1003 freq:2422 width:0 iface_mode_mask:1
+[  107.117139] [14:48:35.797254][cfg80211][wlan] wl_get_usable_channels : idx:3 chanspec:1004 freq:2427 width:0 iface_mode_mask:1
+[  107.117147] [14:48:35.797261][cfg80211][wlan] wl_get_usable_channels : idx:4 chanspec:1005 freq:2432 width:0 iface_mode_mask:1
+[  107.117154] [14:48:35.797268][cfg80211][wlan] wl_get_usable_channels : idx:5 chanspec:1006 freq:2437 width:0 iface_mode_mask:1
+[  107.117161] [14:48:35.797275][cfg80211][wlan] wl_get_usable_channels : idx:6 chanspec:1007 freq:2442 width:0 iface_mode_mask:1
+[  107.117168] [14:48:35.797282][cfg80211][wlan] wl_get_usable_channels : idx:7 chanspec:1008 freq:2447 width:0 iface_mode_mask:1
+[  107.117175] [14:48:35.797289][cfg80211][wlan] wl_get_usable_channels : idx:8 chanspec:1009 freq:2452 width:0 iface_mode_mask:1
+[  107.117182] [14:48:35.797296][cfg80211][wlan] wl_get_usable_channels : idx:9 chanspec:100a freq:2457 width:0 iface_mode_mask:1
+[  107.117189] [14:48:35.797304][cfg80211][wlan] wl_get_usable_channels : idx:10 chanspec:100b freq:2462 width:0 iface_mode_mask:1
+[  107.117197] [14:48:35.797311][cfg80211][wlan] wl_get_usable_channels : idx:11 chanspec:100c freq:2467 width:0 iface_mode_mask:1
+[  107.117204] [14:48:35.797319][cfg80211][wlan] wl_get_usable_channels : idx:12 chanspec:100d freq:2472 width:0 iface_mode_mask:1
+[  107.117215] [14:48:35.797329][cfg80211][wlan] wl_get_usable_channels : Cur interface STA:1(chspec:d02c) AP:0 P2P GO:0 GC:0 NAN:0
+[  107.119048] [14:48:35.799158][cfg80211][wlan] wl_cfgvendor_get_usable_channels : usable channel param band:4 iface:2 filter:3 max_size:256
+[  107.131324] [14:48:35.811429][cfg80211][wlan] wl_get_usable_channels : Cur interface STA:1(chspec:d02c) AP:0 P2P GO:0 GC:0 NAN:0
+[  107.137119] [14:48:35.817221][cfg80211][wlan] wl_cfgvendor_get_usable_channels : usable channel param band:2 iface:2 filter:3 max_size:256
+[  107.149635] [14:48:35.829740][cfg80211][wlan] wl_get_usable_channels : Cur interface STA:1(chspec:d02c) AP:0 P2P GO:0 GC:0 NAN:0
+[  107.154300] [14:48:35.834405][cfg80211][wlan] wl_cfgvendor_get_usable_channels : usable channel param band:1 iface:2 filter:3 max_size:256
+[  107.166771] [14:48:35.846877][cfg80211][wlan] wl_get_usable_channels : idx:0 chanspec:1001 freq:2412 width:0 iface_mode_mask:2
+[  107.166824] [14:48:35.846935][cfg80211][wlan] wl_get_usable_channels : idx:1 chanspec:1002 freq:2417 width:0 iface_mode_mask:2
+[  107.166860] [14:48:35.846970][cfg80211][wlan] wl_get_usable_channels : idx:2 chanspec:1003 freq:2422 width:0 iface_mode_mask:2
+[  107.166893] [14:48:35.847004][cfg80211][wlan] wl_get_usable_channels : idx:3 chanspec:1004 freq:2427 width:0 iface_mode_mask:2
+[  107.166920] [14:48:35.847033][cfg80211][wlan] wl_get_usable_channels : idx:4 chanspec:1005 freq:2432 width:0 iface_mode_mask:2
+[  107.166938] [14:48:35.847051][cfg80211][wlan] wl_get_usable_channels : idx:5 chanspec:1006 freq:2437 width:0 iface_mode_mask:2
+[  107.166955] [14:48:35.847069][cfg80211][wlan] wl_get_usable_channels : idx:6 chanspec:1007 freq:2442 width:0 iface_mode_mask:2
+[  107.166972] [14:48:35.847085][cfg80211][wlan] wl_get_usable_channels : idx:7 chanspec:1008 freq:2447 width:0 iface_mode_mask:2
+[  107.166989] [14:48:35.847102][cfg80211][wlan] wl_get_usable_channels : idx:8 chanspec:1009 freq:2452 width:0 iface_mode_mask:2
+[  107.167006] [14:48:35.847119][cfg80211][wlan] wl_get_usable_channels : idx:9 chanspec:100a freq:2457 width:0 iface_mode_mask:2
+[  107.167023] [14:48:35.847136][cfg80211][wlan] wl_get_usable_channels : idx:10 chanspec:100b freq:2462 width:0 iface_mode_mask:2
+[  107.167050] [14:48:35.847163][cfg80211][wlan] wl_get_usable_channels : Cur interface STA:1(chspec:d02c) AP:0 P2P GO:0 GC:0 NAN:0
+[  107.170630] [14:48:35.850735][cfg80211][wlan] wl_cfgvendor_get_usable_channels : usable channel param band:4 iface:8 filter:3 max_size:256
+[  107.182935] [14:48:35.863041][cfg80211][wlan] wl_get_usable_channels : Cur interface STA:1(chspec:d02c) AP:0 P2P GO:0 GC:0 NAN:0
+[  107.185049] [14:48:35.865157][cfg80211][wlan] wl_cfgvendor_get_usable_channels : usable channel param band:2 iface:8 filter:3 max_size:256
+[  107.197996] [14:48:35.878100][cfg80211][wlan] wl_get_usable_channels : idx:0 chanspec:d024 freq:5180 width:0 iface_mode_mask:8
+[  107.198035] [14:48:35.878148][cfg80211][wlan] wl_get_usable_channels : idx:1 chanspec:d028 freq:5200 width:0 iface_mode_mask:8
+[  107.198051] [14:48:35.878164][cfg80211][wlan] wl_get_usable_channels : idx:2 chanspec:d02c freq:5220 width:0 iface_mode_mask:8
+[  107.198066] [14:48:35.878180][cfg80211][wlan] wl_get_usable_channels : idx:3 chanspec:d030 freq:5240 width:0 iface_mode_mask:8
+[  107.198082] [14:48:35.878195][cfg80211][wlan] wl_get_usable_channels : idx:4 chanspec:d095 freq:5745 width:0 iface_mode_mask:8
+[  107.199043] [14:48:35.878225][cfg80211][wlan] wl_get_usable_channels : idx:5 chanspec:d099 freq:5765 width:0 iface_mode_mask:8
+[  107.199067] [14:48:35.879180][cfg80211][wlan] wl_get_usable_channels : idx:6 chanspec:d09d freq:5785 width:0 iface_mode_mask:8
+[  107.199083] [14:48:35.879196][cfg80211][wlan] wl_get_usable_channels : idx:7 chanspec:d0a1 freq:5805 width:0 iface_mode_mask:8
+[  107.199098] [14:48:35.879211][cfg80211][wlan] wl_get_usable_channels : idx:8 chanspec:d0a5 freq:5825 width:0 iface_mode_mask:8
+[  107.199123] [14:48:35.879236][cfg80211][wlan] wl_get_usable_channels : Cur interface STA:1(chspec:d02c) AP:0 P2P GO:0 GC:0 NAN:0
+[  107.201689] [14:48:35.881796][cfg80211][wlan] wl_cfgvendor_get_usable_channels : usable channel param band:1 iface:8 filter:3 max_size:256
+[  107.214939] [14:48:35.895045][cfg80211][wlan] wl_get_usable_channels : idx:0 chanspec:1001 freq:2412 width:0 iface_mode_mask:8
+[  107.214979] [14:48:35.895092][cfg80211][wlan] wl_get_usable_channels : idx:1 chanspec:1002 freq:2417 width:0 iface_mode_mask:8
+[  107.214995] [14:48:35.895108][cfg80211][wlan] wl_get_usable_channels : idx:2 chanspec:1003 freq:2422 width:0 iface_mode_mask:8
+[  107.215010] [14:48:35.895123][cfg80211][wlan] wl_get_usable_channels : idx:3 chanspec:1004 freq:2427 width:0 iface_mode_mask:8
+[  107.215025] [14:48:35.895138][cfg80211][wlan] wl_get_usable_channels : idx:4 chanspec:1005 freq:2432 width:0 iface_mode_mask:8
+[  107.215039] [14:48:35.895152][cfg80211][wlan] wl_get_usable_channels : idx:5 chanspec:1006 freq:2437 width:0 iface_mode_mask:8
+[  107.215053] [14:48:35.895166][cfg80211][wlan] wl_get_usable_channels : idx:6 chanspec:1007 freq:2442 width:0 iface_mode_mask:8
+[  107.215067] [14:48:35.895181][cfg80211][wlan] wl_get_usable_channels : idx:7 chanspec:1008 freq:2447 width:0 iface_mode_mask:8
+[  107.215082] [14:48:35.895195][cfg80211][wlan] wl_get_usable_channels : idx:8 chanspec:1009 freq:2452 width:0 iface_mode_mask:8
+[  107.215096] [14:48:35.895209][cfg80211][wlan] wl_get_usable_channels : idx:9 chanspec:100a freq:2457 width:0 iface_mode_mask:8
+[  107.215111] [14:48:35.895224][cfg80211][wlan] wl_get_usable_channels : idx:10 chanspec:100b freq:2462 width:0 iface_mode_mask:8
+[  107.215125] [14:48:35.895239][cfg80211][wlan] wl_get_usable_channels : idx:11 chanspec:100c freq:2467 width:0 iface_mode_mask:8
+[  107.215140] [14:48:35.895253][cfg80211][wlan] wl_get_usable_channels : idx:12 chanspec:100d freq:2472 width:0 iface_mode_mask:8
+[  107.215163] [14:48:35.895277][cfg80211][wlan] wl_get_usable_channels : Cur interface STA:1(chspec:d02c) AP:0 P2P GO:0 GC:0 NAN:0
+[  107.220707] [14:48:35.900807][cfg80211][wlan] wl_cfgvendor_get_usable_channels : usable channel param band:4 iface:16 filter:3 max_size:256
+[  107.233037] [14:48:35.913143][cfg80211][wlan] wl_get_usable_channels : Cur interface STA:1(chspec:d02c) AP:0 P2P GO:0 GC:0 NAN:0
+[  107.234626] [14:48:35.914734][cfg80211][wlan] wl_cfgvendor_get_usable_channels : usable channel param band:2 iface:16 filter:3 max_size:256
+[  107.247767] [14:48:35.927878][cfg80211][wlan] wl_get_usable_channels : Cur interface STA:1(chspec:d02c) AP:0 P2P GO:0 GC:0 NAN:0
+[  107.249066] [14:48:35.929176][cfg80211][wlan] wl_cfgvendor_get_usable_channels : usable channel param band:1 iface:16 filter:3 max_size:256
+[  107.261587] [14:48:35.941692][cfg80211][wlan] wl_get_usable_channels : idx:0 chanspec:1001 freq:2412 width:0 iface_mode_mask:16
+[  107.261641] [14:48:35.941751][cfg80211][wlan] wl_get_usable_channels : idx:1 chanspec:1002 freq:2417 width:0 iface_mode_mask:16
+[  107.261677] [14:48:35.941787][cfg80211][wlan] wl_get_usable_channels : idx:2 chanspec:1003 freq:2422 width:0 iface_mode_mask:16
+[  107.261711] [14:48:35.941821][cfg80211][wlan] wl_get_usable_channels : idx:3 chanspec:1004 freq:2427 width:0 iface_mode_mask:16
+[  107.261744] [14:48:35.941855][cfg80211][wlan] wl_get_usable_channels : idx:4 chanspec:1005 freq:2432 width:0 iface_mode_mask:16
+[  107.261774] [14:48:35.941886][cfg80211][wlan] wl_get_usable_channels : idx:5 chanspec:1006 freq:2437 width:0 iface_mode_mask:16
+[  107.261793] [14:48:35.941906][cfg80211][wlan] wl_get_usable_channels : idx:6 chanspec:1007 freq:2442 width:0 iface_mode_mask:16
+[  107.261811] [14:48:35.941925][cfg80211][wlan] wl_get_usable_channels : idx:7 chanspec:1008 freq:2447 width:0 iface_mode_mask:16
+[  107.261829] [14:48:35.941942][cfg80211][wlan] wl_get_usable_channels : idx:8 chanspec:1009 freq:2452 width:0 iface_mode_mask:16
+[  107.261847] [14:48:35.941960][cfg80211][wlan] wl_get_usable_channels : idx:9 chanspec:100a freq:2457 width:0 iface_mode_mask:16
+[  107.261864] [14:48:35.941977][cfg80211][wlan] wl_get_usable_channels : idx:10 chanspec:100b freq:2462 width:0 iface_mode_mask:16
+[  107.261892] [14:48:35.942004][cfg80211][wlan] wl_get_usable_channels : Cur interface STA:1(chspec:d02c) AP:0 P2P GO:0 GC:0 NAN:0
+[  107.264782] [14:48:35.944892][cfg80211][wlan] wl_cfgvendor_get_usable_channels : usable channel param band:4 iface:32 filter:3 max_size:256
+[  107.277444] [14:48:35.957549][cfg80211][wlan] wl_get_usable_channels : Cur interface STA:1(chspec:d02c) AP:0 P2P GO:0 GC:0 NAN:0
+[  107.279525] [14:48:35.959633][cfg80211][wlan] wl_cfgvendor_get_usable_channels : usable channel param band:2 iface:32 filter:3 max_size:256
+[  107.292117] [14:48:35.972221][cfg80211][wlan] wl_get_usable_channels : Cur interface STA:1(chspec:d02c) AP:0 P2P GO:0 GC:0 NAN:0
+[  107.293864] [14:48:35.973972][cfg80211][wlan] wl_cfgvendor_get_usable_channels : usable channel param band:1 iface:32 filter:3 max_size:256
+[  107.306434] [14:48:35.986536][cfg80211][wlan] wl_get_usable_channels : idx:0 chanspec:1001 freq:2412 width:0 iface_mode_mask:32
+[  107.306502] [14:48:35.986611][cfg80211][wlan] wl_get_usable_channels : idx:1 chanspec:1002 freq:2417 width:0 iface_mode_mask:32
+[  107.306548] [14:48:35.986657][cfg80211][wlan] wl_get_usable_channels : idx:2 chanspec:1003 freq:2422 width:0 iface_mode_mask:32
+[  107.306587] [14:48:35.986698][cfg80211][wlan] wl_get_usable_channels : idx:3 chanspec:1004 freq:2427 width:0 iface_mode_mask:32
+[  107.306607] [14:48:35.986720][cfg80211][wlan] wl_get_usable_channels : idx:4 chanspec:1005 freq:2432 width:0 iface_mode_mask:32
+[  107.306624] [14:48:35.986738][cfg80211][wlan] wl_get_usable_channels : idx:5 chanspec:1006 freq:2437 width:0 iface_mode_mask:32
+[  107.306642] [14:48:35.986755][cfg80211][wlan] wl_get_usable_channels : idx:6 chanspec:1007 freq:2442 width:0 iface_mode_mask:32
+[  107.306660] [14:48:35.986773][cfg80211][wlan] wl_get_usable_channels : idx:7 chanspec:1008 freq:2447 width:0 iface_mode_mask:32
+[  107.306677] [14:48:35.986790][cfg80211][wlan] wl_get_usable_channels : idx:8 chanspec:1009 freq:2452 width:0 iface_mode_mask:32
+[  107.306694] [14:48:35.986807][cfg80211][wlan] wl_get_usable_channels : idx:9 chanspec:100a freq:2457 width:0 iface_mode_mask:32
+[  107.306711] [14:48:35.986824][cfg80211][wlan] wl_get_usable_channels : idx:10 chanspec:100b freq:2462 width:0 iface_mode_mask:32
+[  107.306739] [14:48:35.986852][cfg80211][wlan] wl_get_usable_channels : Cur interface STA:1(chspec:d02c) AP:0 P2P GO:0 GC:0 NAN:0
+[  107.312157] [14:48:35.992231][cfg80211][wlan] wl_cfgvendor_get_usable_channels : usable channel param band:4 iface:128 filter:3 max_size:256
+[  107.323688] [14:48:36.003794][cfg80211][wlan] wl_get_usable_channels : Cur interface STA:1(chspec:d02c) AP:0 P2P GO:0 GC:0 NAN:0
+[  107.325456] [14:48:36.005567][cfg80211][wlan] wl_cfgvendor_get_usable_channels : usable channel param band:2 iface:128 filter:3 max_size:256
+[  107.336820] [14:48:36.016926][cfg80211][wlan] wl_get_usable_channels : Cur interface STA:1(chspec:d02c) AP:0 P2P GO:0 GC:0 NAN:0
+[  107.338271] [14:48:36.018382][cfg80211][wlan] wl_cfgvendor_get_usable_channels : usable channel param band:1 iface:128 filter:3 max_size:256
+[  107.349669] [14:48:36.029780][cfg80211][wlan] wl_get_usable_channels : Cur interface STA:1(chspec:d02c) AP:0 P2P GO:0 GC:0 NAN:0
+[  108.360136] st21nfc i2c-st21nfc: st21nfc_power_stats_switch Error: Switched from IDLE to IDLE!: 1a720, ntf=0
+[  108.453444] type=1400 audit(1773902917.131:896): avc: denied { write } for comm="ThreadPoolForeg" name="traced_producer" dev="tmpfs" ino=943 scontext=u:r:gmscore_app:s0:c512,c768 tcontext=u:object_r:traced_producer_socket:s0 tclass=sock_file permissive=0 app=com.google.android.gms
+[  108.848040] binder_alloc: 9603: binder_alloc_buf size 1056768 failed, no address space
+[  108.848055] binder_alloc: allocated: 344 (num: 2 largest: 336), free: 1040040 (num: 1 largest: 1040040)
+[  108.848062] binder: 2929:9451 transaction failed 29201/-28, size 1056768-0 line 2917
+[  109.254847] type=1400 audit(1773902917.931:897): avc: denied { read } for comm="Binder:9603_2" name="u:object_r:system_adbd_prop:s0" dev="tmpfs" ino=276 scontext=u:r:gmscore_app:s0:c512,c768 tcontext=u:object_r:system_adbd_prop:s0 tclass=file permissive=0 app=com.google.android.gms
+[  109.558649] type=1400 audit(1773902918.231:898): avc: denied { read } for comm="Binder:9603_2" name="u:object_r:system_adbd_prop:s0" dev="tmpfs" ino=276 scontext=u:r:gmscore_app:s0:c512,c768 tcontext=u:object_r:system_adbd_prop:s0 tclass=file permissive=0 app=com.google.android.gms
+[  111.188326] type=1400 audit(1773902919.863:899): avc: denied { write } for comm="ThreadPoolForeg" name="traced_producer" dev="tmpfs" ino=943 scontext=u:r:gmscore_app:s0:c512,c768 tcontext=u:object_r:traced_producer_socket:s0 tclass=sock_file permissive=0 app=com.google.android.gms
+[  112.225085] type=1400 audit(1773902920.903:900): avc: denied { write } for comm="ThreadPoolForeg" name="traced_producer" dev="tmpfs" ino=943 scontext=u:r:gmscore_app:s0:c512,c768 tcontext=u:object_r:traced_producer_socket:s0 tclass=sock_file permissive=0 app=com.google.android.gms
+[  112.363825] type=1400 audit(1773902921.039:901): avc: denied { read } for comm="lowpool[3]" name="u:object_r:system_adbd_prop:s0" dev="tmpfs" ino=276 scontext=u:r:gmscore_app:s0:c512,c768 tcontext=u:object_r:system_adbd_prop:s0 tclass=file permissive=0 app=com.google.android.gms
+[  112.495866] type=1400 audit(1773902921.171:902): avc: denied { write } for comm="ThreadPoolForeg" name="traced_producer" dev="tmpfs" ino=943 scontext=u:r:gmscore_app:s0:c512,c768 tcontext=u:object_r:traced_producer_socket:s0 tclass=sock_file permissive=0 app=com.google.android.gms
+[  113.121721] s3c2410-wdt 10070000.watchdog_cl1: Watchdog cluster 1 keepalive!, old_wtcnt = 7751, wtcnt = cc8c
+[  114.234086] type=1400 audit(1773902922.903:903): avc: denied { write } for comm="ThreadPoolForeg" name="traced_producer" dev="tmpfs" ino=943 scontext=u:r:gmscore_app:s0:c512,c768 tcontext=u:object_r:traced_producer_socket:s0 tclass=sock_file permissive=0 app=com.google.android.gms
+[  114.402721] type=1400 audit(1773902923.079:904): avc: denied { read } for comm="Binder:9603_5" name="u:object_r:system_adbd_prop:s0" dev="tmpfs" ino=276 scontext=u:r:gmscore_app:s0:c512,c768 tcontext=u:object_r:system_adbd_prop:s0 tclass=file permissive=0 app=com.google.android.gms
+[  117.069962] type=1400 audit(1773902925.747:905): avc: denied { write } for comm="ThreadPoolForeg" name="traced_producer" dev="tmpfs" ino=943 scontext=u:r:gmscore_app:s0:c512,c768 tcontext=u:object_r:traced_producer_socket:s0 tclass=sock_file permissive=0 app=com.google.android.gms
+[  117.237776] type=1400 audit(1773902925.915:906): avc: denied { write } for comm="ThreadPoolForeg" name="traced_producer" dev="tmpfs" ino=943 scontext=u:r:gmscore_app:s0:c512,c768 tcontext=u:object_r:traced_producer_socket:s0 tclass=sock_file permissive=0 app=com.google.android.gms
+[  117.536390] type=1400 audit(1773902926.211:907): avc: denied { write } for comm="ThreadPoolForeg" name="traced_producer" dev="tmpfs" ino=943 scontext=u:r:gmscore_app:s0:c512,c768 tcontext=u:object_r:traced_producer_socket:s0 tclass=sock_file permissive=0 app=com.google.android.gms
+[  117.920001] type=1400 audit(1773902926.595:908): avc: granted { execute } for comm="pool-3-thread-5" path="/data/data/com.google.android.youtube/app_pccache2/5/FF9F46C837651603405478A94323CFF15475179C/pcam.jar" dev="dm-11" ino=769172 scontext=u:r:untrusted_app:s0:c181,c256,c512,c768 tcontext=u:object_r:app_data_file:s0:c181,c256,c512,c768 tclass=file app=com.google.android.youtube
+[  121.232973] logd: start watching /data/system/packages.list ...
+[  121.235169] logd: ReadPackageList, total packages: 275
+[  121.276956] type=1400 audit(1773902929.955:909): avc: denied { write } for comm="ThreadPoolForeg" name="traced_producer" dev="tmpfs" ino=943 scontext=u:r:gmscore_app:s0:c512,c768 tcontext=u:object_r:traced_producer_socket:s0 tclass=sock_file permissive=0 app=com.google.android.gms
+[  122.234303] [+] KP D su_add_allow_uid: uid: 10243, to_uid: 0, sctx: u:r:magisk:s0, rc: 0
+[  122.234351] [+] KP D su_add_allow_uid: uid: 10244, to_uid: 0, sctx: u:r:magisk:s0, rc: 0
+[  122.234369] [+] KP D su_add_allow_uid: uid: 10245, to_uid: 0, sctx: u:r:magisk:s0, rc: 0
+[  122.234385] [+] KP D su_add_allow_uid: uid: 10237, to_uid: 0, sctx: u:r:magisk:s0, rc: 0
+[  122.234400] [+] KP D su_add_allow_uid: uid: 10751, to_uid: 0, sctx: u:r:magisk:s0, rc: 0
+[  122.606060] type=1400 audit(1773902931.283:910): avc: denied { read } for comm="Thread-2" name="u:object_r:dck_prop:s0" dev="tmpfs" ino=147 scontext=u:r:euiccpixel_app:s0:c187,c256,c512,c768 tcontext=u:object_r:dck_prop:s0 tclass=file permissive=0 app=com.google.euiccpixel
+[  122.640818] st54spi spi14.0: st54spi_power_on : st54 set nReset to Low
+[  123.013799] st54spi spi14.0: st54spi_power_on : st54 set nReset to Low
+[  123.079249] st54spi spi14.0: st54spi_power_on : st54 set nReset to Low
+[  123.121869] s3c2410-wdt 10070000.watchdog_cl1: Watchdog cluster 1 keepalive!, old_wtcnt = 7752, wtcnt = cc8c
+[  123.529712] binder: undelivered transaction 346116, process died.
+[  123.529868] binder: undelivered transaction 347879, process died.
+[  123.529876] binder: undelivered transaction 347882, process died.
+[  123.538588] type=1400 audit(1773902932.215:911): avc: denied { write } for comm="ThreadPoolForeg" name="traced_producer" dev="tmpfs" ino=943 scontext=u:r:gmscore_app:s0:c512,c768 tcontext=u:object_r:traced_producer_socket:s0 tclass=sock_file permissive=0 app=com.google.android.gms
+[  124.526617] init: Untracked pid 656 exited with status 137
+[  124.527974] init: Untracked pid 655 exited with status 137
+[  125.124440] exynos5-hsi2c 10970000.hsi2c: HSI2C Error Interrupt occurred(IS:0x00000400, TR:0x00080001)
+[  125.124456] exynos5-hsi2c 10970000.hsi2c: HSI2C NO ACK occurred
+[  125.124486] exynos5-hsi2c 10970000.hsi2c: ack was not received at write
+[  125.124525] exynos5-hsi2c 10970000.hsi2c: exynos5_i2c_set_timing IPCLK = 199680000 OP_CLK = 400000 DIV = 31 Timing FS1 = 0x1F0FF00 TIMING FS2 = 0x30003E0 TIMING FS3 = 0x1F0000
+[  125.124536] p9221 i2c-p9412: i2c read error, reg:ba, ret:-6 (-6)
+[  125.124541] p9221 i2c-p9412: cannot read MFG_CODE (-6)
+[  125.124589] exynos5-hsi2c 10970000.hsi2c: HSI2C Error Interrupt occurred(IS:0x00000400, TR:0x00080001)
+[  125.124593] exynos5-hsi2c 10970000.hsi2c: HSI2C NO ACK occurred
+[  125.124611] exynos5-hsi2c 10970000.hsi2c: ack was not received at write
+[  125.124637] exynos5-hsi2c 10970000.hsi2c: exynos5_i2c_set_timing IPCLK = 199680000 OP_CLK = 400000 DIV = 31 Timing FS1 = 0x1F0FF00 TIMING FS2 = 0x30003E0 TIMING FS3 = 0x1F0000
+[  125.124644] p9221 i2c-p9412: i2c read error, reg:4c, ret:-6 (-6)
+[  125.124648] p9221 i2c-p9412: Could not read mode: -6
+[  125.124695] exynos5-hsi2c 10970000.hsi2c: HSI2C Error Interrupt occurred(IS:0x00000400, TR:0x00080001)
+[  125.124699] exynos5-hsi2c 10970000.hsi2c: HSI2C NO ACK occurred
+[  125.124716] exynos5-hsi2c 10970000.hsi2c: ack was not received at write
+[  125.124740] exynos5-hsi2c 10970000.hsi2c: exynos5_i2c_set_timing IPCLK = 199680000 OP_CLK = 400000 DIV = 31 Timing FS1 = 0x1F0FF00 TIMING FS2 = 0x30003E0 TIMING FS3 = 0x1F0000
+[  125.124748] p9221 i2c-p9412: i2c read error, reg:42, ret:-6 (-6)
+[  125.124752] p9221 i2c-p9412: Could read VOUT_ADC, -6
+[  125.124809] healthd: battery l=100 v=4421 t=36.0 h=2 st=2 c=393125 fc=4548000 cc=74 chg=a
+[  125.129031] exynos5-hsi2c 10970000.hsi2c: HSI2C Error Interrupt occurred(IS:0x00000400, TR:0x00080001)
+[  125.129040] exynos5-hsi2c 10970000.hsi2c: HSI2C NO ACK occurred
+[  125.129064] exynos5-hsi2c 10970000.hsi2c: ack was not received at write
+[  125.129095] exynos5-hsi2c 10970000.hsi2c: exynos5_i2c_set_timing IPCLK = 199680000 OP_CLK = 400000 DIV = 31 Timing FS1 = 0x1F0FF00 TIMING FS2 = 0x30003E0 TIMING FS3 = 0x1F0000
+[  125.129103] p9221 i2c-p9412: i2c read error, reg:ba, ret:-6 (-6)
+[  125.129108] p9221 i2c-p9412: cannot read MFG_CODE (-6)
+[  125.129155] exynos5-hsi2c 10970000.hsi2c: HSI2C Error Interrupt occurred(IS:0x00000400, TR:0x00080001)
+[  125.129159] exynos5-hsi2c 10970000.hsi2c: HSI2C NO ACK occurred
+[  125.129175] exynos5-hsi2c 10970000.hsi2c: ack was not received at write
+[  125.129200] exynos5-hsi2c 10970000.hsi2c: exynos5_i2c_set_timing IPCLK = 199680000 OP_CLK = 400000 DIV = 31 Timing FS1 = 0x1F0FF00 TIMING FS2 = 0x30003E0 TIMING FS3 = 0x1F0000
+[  125.129206] p9221 i2c-p9412: i2c read error, reg:4c, ret:-6 (-6)
+[  125.129211] p9221 i2c-p9412: Could not read mode: -6
+[  125.129258] exynos5-hsi2c 10970000.hsi2c: HSI2C Error Interrupt occurred(IS:0x00000400, TR:0x00080001)
+[  125.129262] exynos5-hsi2c 10970000.hsi2c: HSI2C NO ACK occurred
+[  125.129277] exynos5-hsi2c 10970000.hsi2c: ack was not received at write
+[  125.129301] exynos5-hsi2c 10970000.hsi2c: exynos5_i2c_set_timing IPCLK = 199680000 OP_CLK = 400000 DIV = 31 Timing FS1 = 0x1F0FF00 TIMING FS2 = 0x30003E0 TIMING FS3 = 0x1F0000
+[  125.129308] p9221 i2c-p9412: i2c read error, reg:42, ret:-6 (-6)
+[  125.129313] p9221 i2c-p9412: Could read VOUT_ADC, -6
+[  126.317653] type=1400 audit(1773902934.995:912): avc: denied { write } for comm="ThreadPoolForeg" name="traced_producer" dev="tmpfs" ino=943 scontext=u:r:gmscore_app:s0:c512,c768 tcontext=u:object_r:traced_producer_socket:s0 tclass=sock_file permissive=0 app=com.google.android.gms
+[  128.905211] google_charger: usbchg=USB_CDP typec=null usbv=5000 usbc=929 usbMv=5000 usbMc=3000
+[  128.907184] google_battery: MSC_DIN chg_state=bb8114632010009 f=0x9 chg_s=Charging chg_t=Taper vchg=4422 icl=3000
+[  130.577061] type=1400 audit(1773902939.255:913): avc: denied { write } for comm="ThreadPoolForeg" name="traced_producer" dev="tmpfs" ino=943 scontext=u:r:gmscore_app:s0:c512,c768 tcontext=u:object_r:traced_producer_socket:s0 tclass=sock_file permissive=0 app=com.google.android.gms
+[  131.639400] perf: interrupt took too long (2503 > 2500), lowering kernel.perf_event_max_sample_rate to 79750
+[  132.357693] [+] KP D load_module_path: /data/user/0/me.bmax.apatch/kpm/wjws.kpm
+[  132.357723] [+] KP D load_module_path: module size: 4febf9
+[  132.357894] type=1400 audit(1773902941.035:914): avc: denied { write } for comm="ThreadPoolForeg" name="traced_producer" dev="tmpfs" ino=943 scontext=u:r:gmscore_app:s0:c512,c768 tcontext=u:object_r:traced_producer_socket:s0 tclass=sock_file permissive=0 app=com.google.android.gms
+[  132.363835] [+] KP D get_module_nums: 0
+[  133.122311] s3c2410-wdt 10070000.watchdog_cl1: Watchdog cluster 1 keepalive!, old_wtcnt = 7750, wtcnt = cc8c
+[  138.199578] [+] KP D load_module_path: /data/user/0/me.bmax.apatch/kpm/qbyk.kpm
+[  138.199608] [+] KP D load_module_path: module size: 1a7b0
+[  138.302576] [+] KP D get_module_nums: 0
+[  138.582762] type=1400 audit(1773902947.259:915): avc: denied { write } for comm="ThreadPoolForeg" name="traced_producer" dev="tmpfs" ino=943 scontext=u:r:gmscore_app:s0:c512,c768 tcontext=u:object_r:traced_producer_socket:s0 tclass=sock_file permissive=0 app=com.google.android.gms

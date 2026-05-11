@@ -1,0 +1,1517 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SVC Monitor — Reverse Engineering Dashboard</title>
+<script src="https://cdn.jsdelivr.net/npm/vue@3/dist/vue.global.prod.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+<script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+<style>
+:root {
+  --bg: #0d1117; --bg2: #161b22; --bg3: #21262d; --border: #30363d;
+  --text: #c9d1d9; --text2: #8b949e; --accent: #58a6ff; --green: #3fb950;
+  --red: #f85149; --orange: #d29922; --purple: #bc8cff; --cyan: #39d3f5;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: 'SF Mono', 'Cascadia Code', 'Consolas', monospace; background: var(--bg); color: var(--text); font-size: 13px; }
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+/* Layout */
+.app { display: flex; flex-direction: column; height: 100vh; }
+.header { background: var(--bg2); border-bottom: 1px solid var(--border); padding: 8px 16px; display: flex; align-items: center; gap: 16px; flex-shrink: 0; }
+.header h1 { font-size: 15px; color: var(--accent); font-weight: 600; white-space: nowrap; }
+.header .status { display: flex; align-items: center; gap: 6px; font-size: 12px; }
+.header .dot { width: 8px; height: 8px; border-radius: 50%; }
+.dot-green { background: var(--green); box-shadow: 0 0 6px var(--green); }
+.dot-red { background: var(--red); box-shadow: 0 0 6px var(--red); }
+.header .stat-bar { display: flex; gap: 16px; margin-left: auto; font-size: 12px; color: var(--text2); }
+.stat-bar span { white-space: nowrap; }
+.stat-bar .num { color: var(--accent); font-weight: 600; }
+
+/* Tabs */
+.tabs { display: flex; background: var(--bg2); border-bottom: 1px solid var(--border); flex-shrink: 0; }
+.tab { padding: 8px 20px; cursor: pointer; color: var(--text2); border-bottom: 2px solid transparent; transition: all 0.2s; font-size: 13px; }
+.tab:hover { color: var(--text); background: var(--bg3); }
+.tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+/* Main content */
+.main { flex: 1; overflow: hidden; display: flex; flex-direction: column; }
+.panel { flex: 1; overflow: auto; padding: 12px; }
+
+/* Search bar */
+.search-bar { display: flex; gap: 8px; padding: 10px 12px; background: var(--bg2); border-bottom: 1px solid var(--border); flex-shrink: 0; flex-wrap: wrap; }
+.search-bar input, .search-bar select { background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 6px 10px; border-radius: 4px; font-family: inherit; font-size: 12px; }
+.search-bar input:focus, .search-bar select:focus { outline: none; border-color: var(--accent); }
+.search-bar input.query { flex: 1; min-width: 200px; }
+.search-bar button { background: var(--accent); color: #000; border: none; padding: 6px 14px; border-radius: 4px; cursor: pointer; font-family: inherit; font-size: 12px; font-weight: 600; }
+.search-bar button:hover { opacity: 0.9; }
+.search-bar button.secondary { background: var(--bg3); color: var(--text); border: 1px solid var(--border); }
+.search-bar .filter-tag { background: var(--bg3); border: 1px solid var(--border); color: var(--cyan); padding: 4px 8px; border-radius: 12px; font-size: 11px; display: flex; align-items: center; gap: 4px; }
+.filter-tag .remove { cursor: pointer; color: var(--text2); }
+.filter-tag .remove:hover { color: var(--red); }
+
+/* Event table */
+.event-table { width: 100%; border-collapse: collapse; }
+.event-table th { background: var(--bg2); position: sticky; top: 0; z-index: 1; text-align: left; padding: 6px 8px; color: var(--text2); font-size: 11px; text-transform: uppercase; border-bottom: 1px solid var(--border); }
+.event-table td { padding: 5px 8px; border-bottom: 1px solid var(--border); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 300px; font-size: 12px; }
+.event-table tr { cursor: pointer; transition: background 0.15s; }
+.event-table tr:hover { background: var(--bg3); }
+.event-table tr.antidebug { background: rgba(248,81,73,0.1); }
+.event-table tr.antidebug:hover { background: rgba(248,81,73,0.2); }
+.event-table tr.sc-proc { box-shadow: inset 4px 0 0 var(--red); }
+.event-table tr.sc-net { box-shadow: inset 4px 0 0 var(--accent); }
+.event-table tr.sc-file { box-shadow: inset 4px 0 0 var(--green); }
+.event-table tr.sc-env { box-shadow: inset 4px 0 0 var(--orange); }
+.event-table .nr { color: var(--cyan); }
+.event-table .name { color: var(--green); font-weight: 600; }
+.event-table .pid-cell { color: var(--orange); }
+.detail-kv .pid-cell { cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
+.event-table .comm { color: var(--purple); }
+.event-table .args { color: var(--text2); max-width: 500px; }
+.event-table .retval-ok { color: var(--green); }
+.event-table .retval-err { color: var(--red); }
+.event-table .badge { display: inline-block; padding: 1px 6px; border-radius: 3px; font-size: 10px; font-weight: 600; }
+.badge-antidebug { background: rgba(248,81,73,0.2); color: var(--red); }
+.badge-bt { background: rgba(88,166,255,0.2); color: var(--accent); }
+.badge-proc { background: rgba(248,81,73,0.2); color: var(--red); }
+.badge-net { background: rgba(88,166,255,0.2); color: var(--accent); }
+.badge-file { background: rgba(63,185,80,0.2); color: var(--green); }
+.badge-env { background: rgba(210,153,34,0.2); color: var(--orange); }
+
+/* Thread list panel */
+.tid-layout { display: flex; gap: 12px; }
+.tid-panel { width: 240px; flex-shrink: 0; background: var(--bg2); border: 1px solid var(--border); border-radius: 6px; padding: 10px; height: fit-content; }
+.tid-panel h4 { color: var(--text2); font-size: 11px; text-transform: uppercase; margin-bottom: 8px; letter-spacing: 0.5px; }
+.tid-item { display: flex; align-items: center; gap: 6px; padding: 4px 2px; cursor: pointer; }
+.tid-item:hover { background: var(--bg3); border-radius: 4px; }
+.tid-item .tid { color: var(--orange); width: 72px; }
+.tid-item .cnt { color: var(--text2); margin-left: auto; }
+.event-main { flex: 1; min-width: 0; }
+.row-focus { background: rgba(88,166,255,0.12); }
+.row-focus:hover { background: rgba(88,166,255,0.18); }
+.row-blink { animation: rowblink 0.6s ease-in-out 5; }
+@keyframes rowblink {
+  0% { background: rgba(255,255,255,0.02); }
+  50% { background: rgba(248,81,73,0.28); }
+  100% { background: rgba(255,255,255,0.02); }
+}
+
+/* Pagination */
+.pagination { display: flex; align-items: center; gap: 8px; padding: 10px 12px; background: var(--bg2); border-top: 1px solid var(--border); font-size: 12px; color: var(--text2); flex-shrink: 0; }
+.pagination button { background: var(--bg3); color: var(--text); border: 1px solid var(--border); padding: 4px 10px; border-radius: 3px; cursor: pointer; font-family: inherit; }
+.pagination button:disabled { opacity: 0.4; cursor: not-allowed; }
+.pagination .info { margin-left: auto; }
+
+/* Detail panel (slide-in) */
+.detail-overlay { position: fixed; top: 0; right: 0; width: 520px; height: 100vh; background: var(--bg2); border-left: 1px solid var(--border); z-index: 100; overflow-y: auto; box-shadow: -4px 0 20px rgba(0,0,0,0.5); transform: translateX(100%); transition: transform 0.25s ease; }
+.detail-overlay.show { transform: translateX(0); }
+.detail-header { position: sticky; top: 0; background: var(--bg2); padding: 12px 16px; border-bottom: 1px solid var(--border); display: flex; align-items: center; z-index: 1; }
+.detail-header h3 { flex: 1; font-size: 14px; color: var(--accent); }
+.detail-close { cursor: pointer; color: var(--text2); font-size: 20px; padding: 4px 8px; }
+.detail-close:hover { color: var(--red); }
+.detail-body { padding: 16px; }
+.detail-section { margin-bottom: 16px; }
+.detail-section h4 { color: var(--text2); font-size: 11px; text-transform: uppercase; margin-bottom: 6px; letter-spacing: 0.5px; }
+.detail-kv { display: grid; grid-template-columns: 120px 1fr; gap: 2px 8px; }
+.detail-kv .k { color: var(--text2); }
+.detail-kv .v { color: var(--text); word-break: break-all; }
+.detail-kv .v.mono { font-family: 'SF Mono', monospace; }
+.backtrace-list { list-style: none; }
+.backtrace-list li { padding: 2px 0; color: var(--cyan); font-size: 12px; }
+.backtrace-list li::before { content: "→ "; color: var(--text2); }
+
+/* PID panel */
+.pid-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 10px; }
+.pid-card { background: var(--bg2); border: 1px solid var(--border); border-radius: 6px; padding: 12px; cursor: pointer; transition: all 0.2s; }
+.pid-card:hover { border-color: var(--accent); transform: translateY(-1px); }
+.pid-card .pid-header { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.pid-card .pid-num { font-size: 18px; font-weight: 700; color: var(--orange); }
+.pid-card .pid-comm { color: var(--purple); font-size: 14px; }
+.pid-card .pid-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; font-size: 12px; }
+.pid-card .pid-stats .label { color: var(--text2); }
+.pid-card .pid-stats .value { color: var(--text); text-align: right; }
+.pid-card .syscall-chips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 8px; }
+.syscall-chip { background: var(--bg3); border: 1px solid var(--border); border-radius: 3px; padding: 1px 6px; font-size: 10px; color: var(--green); }
+
+/* Chart containers */
+.chart-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px; }
+.chart-box { background: var(--bg2); border: 1px solid var(--border); border-radius: 6px; padding: 12px; }
+.chart-box h4 { color: var(--text2); font-size: 11px; text-transform: uppercase; margin-bottom: 8px; }
+.chart { width: 100%; height: 300px; }
+.chart-full { width: 100%; height: 400px; }
+
+/* Loading */
+.loading { text-align: center; padding: 40px; color: var(--text2); }
+
+/* Upload area */
+.upload-area { border: 2px dashed var(--border); border-radius: 8px; padding: 30px; text-align: center; color: var(--text2); margin: 12px; cursor: pointer; transition: all 0.2s; }
+.upload-area:hover { border-color: var(--accent); color: var(--accent); }
+.upload-area input { display: none; }
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: var(--bg); }
+::-webkit-scrollbar-thumb { background: var(--bg3); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--border); }
+</style>
+</head>
+<body>
+<div id="app" class="app">
+
+  <!-- Header -->
+  <div class="header">
+    <h1>⚡ SVC Monitor</h1>
+    <div class="status">
+      <div class="dot" :class="bridgeConnected ? 'dot-green' : 'dot-red'"></div>
+      <span>{{ bridgeConnected ? 'Connected' : 'Disconnected' }}</span>
+    </div>
+    <div class="stat-bar">
+      <span>Events: <span class="num">{{ stats.total_events || 0 }}</span></span>
+      <span>PIDs: <span class="num">{{ stats.unique_pids || 0 }}</span></span>
+      <span>Syscalls: <span class="num">{{ stats.unique_syscalls || 0 }}</span></span>
+      <span style="color:var(--red)">Anti-debug: <span class="num" style="color:var(--red)">{{ stats.antidebug_count || 0 }}</span></span>
+    </div>
+  </div>
+
+  <!-- Tabs -->
+  <div class="tabs">
+    <div class="tab" :class="{ active: tab === 'events' }" @click="tab = 'events'">📋 Events</div>
+    <div class="tab" :class="{ active: tab === 'pids' }" @click="tab = 'pids'; loadPids()">🔍 PID Analysis</div>
+    <div class="tab" :class="{ active: tab === 'threads' }" @click="tab = 'threads'">🧵 Threads</div>
+    <div class="tab" :class="{ active: tab === 'maps' }" @click="tab = 'maps'">🗺 Maps</div>
+    <div class="tab" :class="{ active: tab === 'strings' }" @click="tab = 'strings'; loadStrings()">🔤 Strings</div>
+    <div class="tab" :class="{ active: tab === 'charts' }" @click="tab = 'charts'; renderCharts()">📊 Statistics</div>
+    <div class="tab" :class="{ active: tab === 'timeline' }" @click="tab = 'timeline'">⏱ Timeline</div>
+    <div class="tab" :class="{ active: tab === 'upload' }" @click="tab = 'upload'">📁 Import</div>
+  </div>
+
+  <!-- EVENTS TAB -->
+  <template v-if="tab === 'events'">
+    <div class="search-bar">
+      <input class="query" v-model="searchQuery" placeholder="Search events... (syscall name, args, comm, path, etc.)" @keyup.enter="doSearch()">
+      <input v-model.number="searchPid" placeholder="PID" style="width:80px" @keyup.enter="doSearch()">
+      <input v-model.number="searchTid" placeholder="TID" style="width:80px" @keyup.enter="doSearch()">
+      <input v-model="searchComm" placeholder="Process" style="width:100px" @keyup.enter="doSearch()">
+      <select v-model="searchNr" style="width:120px">
+        <option :value="null">All syscalls</option>
+        <option v-for="(count, name) in stats.top_syscalls" :key="name" :value="name">{{ name }} ({{ count }})</option>
+      </select>
+      <label style="display:flex;align-items:center;gap:4px;font-size:12px;color:var(--text2)">
+        <input type="checkbox" v-model="searchAntidebug"> Anti-debug
+      </label>
+      <label style="display:flex;align-items:center;gap:4px;font-size:12px;color:var(--text2)">
+        <input type="checkbox" v-model="searchHasRetval"> Has return
+      </label>
+      <button @click="doSearch()">Search</button>
+      <button class="secondary" @click="resetSearch()">Reset</button>
+      <button class="secondary" @click="clearAll()">Clear</button>
+      <button class="secondary" @click="stopApp()">Stop App</button>
+      <button class="secondary" @click="clearApp()">Clear App</button>
+      <button class="secondary" @click="clearAppHistory()">Clear App History</button>
+      <button class="secondary" @click="exportJsonl()">Export JSONL</button>
+      <button class="secondary" @click="exportCsv()">Export CSV</button>
+    </div>
+
+    <div class="panel tid-layout" ref="eventPanel">
+      <div class="tid-panel">
+        <h4>Thread (TID)</h4>
+        <div class="tid-item" @click="searchTid=null; searchOffset=0; doSearch()">
+          <input type="checkbox" :checked="searchTid===null" />
+          <span class="tid">ALL</span>
+          <span class="cnt">{{ searchResult.total || stats.total_events || 0 }}</span>
+        </div>
+        <div v-for="t in (searchResult.tid_stats || [])" :key="t.tid" class="tid-item"
+             @click="searchTid=t.tid; searchOffset=0; doSearch()">
+          <input type="checkbox" :checked="searchTid===t.tid" />
+          <span class="tid">{{ t.tid }}</span>
+          <span class="cnt">{{ t.count }}</span>
+        </div>
+      </div>
+
+      <div class="event-main">
+        <table class="event-table">
+        <thead>
+          <tr>
+            <th style="width:40px">#</th>
+            <th style="width:50px">NR</th>
+            <th style="width:130px">Syscall</th>
+            <th style="width:70px">PID</th>
+            <th style="width:70px">TID</th>
+            <th style="width:100px">Process</th>
+            <th>Args</th>
+            <th style="width:70px">Return</th>
+            <th style="width:80px">Duration</th>
+            <th style="width:50px">Info</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="(ev, i) in events" :key="ev._idx || i"
+              :class="[syscallClass(ev), { antidebug: ev.antidebug }]"
+              @click="showDetail(ev, searchResult.indices ? searchResult.indices[i] : i)">
+            <td>{{ searchResult.indices ? searchResult.indices[i] : (searchOffset + i) }}</td>
+            <td class="nr">{{ ev.nr }}</td>
+            <td class="name">
+              <span v-if="syscallTag(ev)" class="badge" :class="syscallTag(ev).cls">{{ syscallTag(ev).text }}</span>
+              {{ ev.name || ('syscall_' + ev.nr) }}
+            </td>
+            <td class="pid-cell" @click.stop="filterByPid(ev.pid)">{{ ev.pid }}</td>
+            <td>{{ ev.tid || '-' }}</td>
+            <td class="comm">{{ ev.comm }}</td>
+            <td class="args" :title="ev.args">{{ ev.args || '-' }}</td>
+            <td :class="ev.retval < 0 ? 'retval-err' : 'retval-ok'">{{ ev.has_retval ? ev.retval : '-' }}</td>
+            <td>{{ ev.duration_ns ? (ev.duration_ns / 1000).toFixed(1) + 'μs' : '-' }}</td>
+            <td>
+              <span v-if="ev.antidebug" class="badge badge-antidebug">AD</span>
+              <span v-if="ev.bt_depth > 0" class="badge badge-bt">BT</span>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+      <div v-if="events.length === 0" class="loading">No events{{ searchQuery ? ' matching your search' : '' }}</div>
+      </div>
+    </div>
+
+    <div class="pagination">
+      <button @click="prevPage()" :disabled="searchOffset <= 0">← Prev</button>
+      <button @click="nextPage()" :disabled="events.length < searchLimit">Next →</button>
+      <select v-model.number="searchLimit" @change="doSearch()" style="background:var(--bg);color:var(--text);border:1px solid var(--border);padding:3px;font-family:inherit;">
+        <option :value="50">50/page</option>
+        <option :value="100">100/page</option>
+        <option :value="200">200/page</option>
+        <option :value="500">500/page</option>
+        <option :value="1000">1000/page</option>
+        <option :value="20000">20000/page</option>
+      </select>
+      <div class="info">
+        Showing {{ searchOffset + 1 }}-{{ searchOffset + events.length }}
+        <span v-if="searchResult.total"> of {{ searchResult.total }}</span>
+      </div>
+    </div>
+  </template>
+
+  <!-- THREADS TAB -->
+  <template v-if="tab === 'threads'">
+    <div class="search-bar">
+      <input v-model.number="threadPid" placeholder="PID (TGID)" style="width:120px" @keyup.enter="loadThreads()">
+      <button @click="loadThreads()">Analyze</button>
+      <button class="secondary" @click="threadPid = null; threadResult=null">Reset</button>
+    </div>
+    <div class="panel">
+      <div v-if="!threadResult" class="loading">Enter PID (TGID) to analyze threads.</div>
+      <div v-else style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+        <div class="chart-box">
+          <h4>Thread Stats</h4>
+          <div style="white-space:pre-wrap;color:var(--text);font-size:12px;">
+            <div v-if="threadResult.threads && threadResult.threads.length">
+              <div v-for="t in threadResult.threads" :key="t.tid">tid={{t.tid}}  cnt={{t.count}}</div>
+            </div>
+            <div v-else>(empty)</div>
+          </div>
+        </div>
+        <div class="chart-box">
+          <h4>Thread Tree (clone/clone3)</h4>
+          <pre style="white-space:pre-wrap;color:var(--text);font-size:12px;margin:0;">{{ threadResult.tree || '(empty)' }}</pre>
+          <div style="color:var(--text2);margin-top:8px;">Edges: {{ threadResult.edge_count || 0 }}</div>
+        </div>
+      </div>
+    </div>
+  </template>
+
+  <!-- MAPS TAB -->
+  <template v-if="tab === 'maps'">
+    <div class="search-bar">
+      <input v-model.number="mapsPid" placeholder="PID (TGID)" style="width:140px" @keyup.enter="loadMaps()">
+      <button @click="loadMaps()">Load</button>
+      <input v-model="mapsJumpAddr" placeholder="Jump addr (0x...)" style="width:160px" @keyup.enter="jumpToAddr()">
+      <button class="secondary" @click="jumpToAddr()">Jump</button>
+      <input v-model="mapsFilterPath" placeholder="Path contains" style="width:160px" @keyup.enter="renderMaps()">
+      <input v-model="mapsFilterPerm" placeholder="Perm (e.g. r-xp)" style="width:120px" @keyup.enter="renderMaps()">
+      <input v-model="mapsFilterAddr" placeholder="Filter addr (0x...)" style="width:160px" @keyup.enter="renderMaps()">
+      <button class="secondary" @click="mapsFilterPath=''; mapsFilterPerm=''; mapsFilterAddr=''; mapsSelectedStart=null; mapsFocusAddr=null; renderMaps()">Reset Filter</button>
+      <button class="secondary" @click="mapsPid=null; mapsText=''; mapsErr=''; mapsEntries=[]; mapsSelectedStart=null; mapsFocusAddr=null; renderMaps()">Reset</button>
+    </div>
+    <div class="panel">
+      <div v-if="mapsErr" style="color:var(--red);white-space:pre-wrap;">{{ mapsErr }}</div>
+      <div v-if="mapsText" class="chart-box" style="margin-bottom:12px">
+        <h4>Address Space</h4>
+        <div id="mapsChart" class="chart-full"></div>
+      </div>
+
+      <div v-if="mapsText" class="chart-box" style="margin-bottom:12px">
+        <h4>Symbols (optional)</h4>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+          <input type="file" ref="symInput" @change="uploadSymbol" style="display:none" />
+          <button class="secondary" @click="$refs.symInput.click()">Upload .so / symbols</button>
+          <button class="secondary" @click="loadSymbolList()">Refresh</button>
+          <span style="color:var(--text2)">Uploaded: {{ (symbolFiles||[]).length }}</span>
+        </div>
+        <div style="margin-top:8px;color:var(--text2);font-size:12px;white-space:pre-wrap">{{ symbolFiles.join(', ') }}</div>
+      </div>
+
+      <div v-if="mapsEntries.length" class="chart-box">
+        <h4>Mappings</h4>
+        <table id="mapsMappingsTable" class="event-table">
+          <thead>
+            <tr>
+              <th style="width:160px">Range</th>
+              <th style="width:60px">Perm</th>
+              <th style="width:90px">Offset</th>
+              <th>Path</th>
+              <th style="width:60px">Flag</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="(m, i) in mapsEntries"
+                :key="i"
+                :data-map-start="m.start"
+                :class="{ 'row-focus': mapsSelectedStart === m.start, 'row-blink': mapsBlinkStart === m.start }"
+                @click="mapsFocusAddr=m.start; mapsSelectedStart=m.start; renderMaps()">
+              <td class="mono">0x{{ m.startHex }}-0x{{ m.endHex }}</td>
+              <td class="mono">{{ m.perm }}</td>
+              <td class="mono">0x{{ m.offHex }}</td>
+              <td class="args" :title="m.path">{{ m.path || '-' }}</td>
+              <td>
+                <span v-if="m.suspicious" class="badge badge-antidebug">SUS</span>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div v-if="!mapsText && !mapsErr" class="loading">Enter PID (TGID) and load /proc/&lt;pid&gt;/maps.</div>
+    </div>
+  </template>
+
+  <!-- STRINGS TAB -->
+  <template v-if="tab === 'strings'">
+    <div class="search-bar">
+      <input class="query" v-model="stringsQ" placeholder="Filter strings (substring)..." @keyup.enter="loadStrings()">
+      <input v-model.number="stringsScan" placeholder="Scan last N events" style="width:160px" @keyup.enter="loadStrings()">
+      <input v-model.number="stringsMaxItems" placeholder="Max items" style="width:120px" @keyup.enter="loadStrings()">
+      <button @click="loadStrings()">Refresh</button>
+      <button class="secondary" @click="stringsQ=''; loadStrings()">Reset</button>
+      <span style="color:var(--text2);font-size:12px;align-self:center">
+        Unique: <span class="num">{{ stringsTotalUnique }}</span>
+      </span>
+    </div>
+    <div class="panel">
+      <div v-if="stringsLoading" class="loading">Loading…</div>
+      <div v-else>
+        <table class="event-table">
+          <thead>
+            <tr>
+              <th>String (len≥5)</th>
+              <th style="width:80px">Count</th>
+              <th style="width:90px">SampleIdx</th>
+              <th style="width:110px">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="it in stringsItems" :key="it.s">
+              <td class="args" style="white-space:pre-wrap;max-width:none" :title="it.s">{{ it.s }}</td>
+              <td class="nr">{{ it.count }}</td>
+              <td class="mono">{{ it.idx === null || it.idx === undefined ? '-' : it.idx }}</td>
+              <td>
+                <button class="secondary" @click="searchFromString(it.s)">Search</button>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+        <div v-if="!stringsItems.length" class="loading">No strings.</div>
+      </div>
+    </div>
+  </template>
+
+  <!-- PID ANALYSIS TAB -->
+  <template v-if="tab === 'pids'">
+    <div class="search-bar">
+      <input class="query" v-model="pidSearch" placeholder="Filter by PID or process name..." @input="filterPids()">
+      <span style="color:var(--text2);font-size:12px">{{ filteredPids.length }} processes</span>
+    </div>
+    <div class="panel">
+      <!-- PID Detail View -->
+      <template v-if="selectedPid !== null">
+        <div style="margin-bottom:12px">
+          <button class="secondary" @click="selectedPid = null" style="background:var(--bg3);color:var(--text);border:1px solid var(--border);padding:6px 12px;border-radius:4px;cursor:pointer;font-family:inherit;">← Back to all PIDs</button>
+          <span style="margin-left:12px;font-size:16px;color:var(--orange);font-weight:700">PID {{ selectedPid }}</span>
+          <span style="margin-left:8px;color:var(--purple)">{{ selectedPidComm }}</span>
+          <button class="secondary" @click="exportJsonl(selectedPid)" style="margin-left:12px;background:var(--bg3);color:var(--text);border:1px solid var(--border);padding:4px 10px;border-radius:4px;cursor:pointer;font-family:inherit;">Export PID JSONL</button>
+        </div>
+
+        <!-- PID Timeline Chart -->
+        <div class="chart-box" style="margin-bottom:12px">
+          <h4>Syscall Timeline</h4>
+          <div id="pidTimelineChart" class="chart-full"></div>
+        </div>
+
+        <!-- PID Events -->
+        <table class="event-table">
+          <thead>
+            <tr>
+              <th style="width:40px">#</th>
+              <th style="width:50px">NR</th>
+              <th style="width:130px">Syscall</th>
+              <th style="width:70px">TID</th>
+              <th>Args</th>
+              <th style="width:70px">Return</th>
+              <th style="width:80px">Duration</th>
+              <th style="width:50px">Info</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="(ev, i) in pidEvents" :key="i"
+                :class="{ antidebug: ev.antidebug }"
+                @click="showDetail(ev, i)">
+              <td>{{ pidEventsOffset + i }}</td>
+              <td class="nr">{{ ev.nr }}</td>
+              <td class="name">{{ ev.name || ('syscall_' + ev.nr) }}</td>
+              <td>{{ ev.tid || '-' }}</td>
+              <td class="args" :title="ev.args">{{ ev.args || '-' }}</td>
+              <td :class="ev.retval < 0 ? 'retval-err' : 'retval-ok'">{{ ev.has_retval ? ev.retval : '-' }}</td>
+              <td>{{ ev.duration_ns ? (ev.duration_ns / 1000).toFixed(1) + 'μs' : '-' }}</td>
+              <td>
+                <span v-if="ev.antidebug" class="badge badge-antidebug">AD</span>
+                <span v-if="ev.bt_depth > 0" class="badge badge-bt">BT</span>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+        <div class="pagination">
+          <button @click="pidEventsOffset = Math.max(0, pidEventsOffset - 200); loadPidEvents()" :disabled="pidEventsOffset <= 0">← Prev</button>
+          <button @click="pidEventsOffset += 200; loadPidEvents()" :disabled="pidEvents.length < 200">Next →</button>
+          <div class="info">Offset: {{ pidEventsOffset }}, Total: {{ pidEventsTotal }}</div>
+        </div>
+      </template>
+
+      <!-- PID Grid -->
+      <template v-else>
+        <div class="pid-grid">
+          <div class="pid-card" v-for="p in filteredPids" :key="p.pid" @click="selectPid(p)">
+            <div class="pid-header">
+              <span class="pid-num">{{ p.pid }}</span>
+              <span class="pid-comm">{{ p.comm }}</span>
+              <span v-if="p.antidebug_count > 0" class="badge badge-antidebug" style="margin-left:auto">{{ p.antidebug_count }} AD</span>
+            </div>
+            <div class="pid-stats">
+              <span class="label">Events</span><span class="value">{{ p.event_count }}</span>
+              <span class="label">Threads</span><span class="value">{{ p.tid_count }}</span>
+              <span class="label">UID</span><span class="value">{{ p.uid }}</span>
+            </div>
+            <div class="syscall-chips">
+              <span class="syscall-chip" v-for="(cnt, name) in p.top_syscalls" :key="name">{{ name }}: {{ cnt }}</span>
+            </div>
+          </div>
+        </div>
+        <div v-if="filteredPids.length === 0" class="loading">No processes found</div>
+      </template>
+    </div>
+  </template>
+
+  <!-- CHARTS TAB -->
+  <template v-if="tab === 'charts'">
+    <div class="panel">
+      <div class="chart-row">
+        <div class="chart-box">
+          <h4>Top 20 Syscalls</h4>
+          <div id="syscallBarChart" class="chart"></div>
+        </div>
+        <div class="chart-box">
+          <h4>Syscall Distribution</h4>
+          <div id="syscallPieChart" class="chart"></div>
+        </div>
+      </div>
+      <div class="chart-row">
+        <div class="chart-box">
+          <h4>Top 20 Processes by Event Count</h4>
+          <div id="pidBarChart" class="chart"></div>
+        </div>
+        <div class="chart-box">
+          <h4>Event Rate (events/2s)</h4>
+          <div id="rateChart" class="chart"></div>
+        </div>
+      </div>
+    </div>
+  </template>
+
+  <!-- TIMELINE TAB -->
+  <template v-if="tab === 'timeline'">
+    <div class="search-bar">
+      <input v-model.number="timelinePid" placeholder="Enter PID for timeline" style="width:120px" @keyup.enter="loadTimeline()">
+      <button @click="loadTimeline()">Load Timeline</button>
+    </div>
+    <div class="panel">
+      <div class="chart-box">
+        <h4>Syscall Timeline for PID {{ timelinePid || '(enter PID above)' }}</h4>
+        <div id="globalTimelineChart" style="width:100%;height:500px;"></div>
+      </div>
+    </div>
+  </template>
+
+  <!-- UPLOAD TAB -->
+  <template v-if="tab === 'upload'">
+    <div class="panel">
+      <div class="upload-area" @click="$refs.fileInput.click()" @dragover.prevent @drop.prevent="handleDrop">
+        <p style="font-size:24px;margin-bottom:8px">📁</p>
+        <p>Click or drag JSONL file here for offline analysis</p>
+        <p style="font-size:11px;margin-top:4px">Supports .jsonl files from SVC Monitor</p>
+        <input type="file" ref="fileInput" accept=".jsonl,.json,.txt" @change="uploadFile">
+      </div>
+      <div v-if="uploadStatus" style="text-align:center;padding:20px;color:var(--green)">{{ uploadStatus }}</div>
+    </div>
+  </template>
+
+  <!-- Detail Slide Panel -->
+  <div class="detail-overlay" :class="{ show: detailEvent !== null }">
+    <div class="detail-header">
+      <h3>Event Detail</h3>
+      <span class="detail-close" @click="detailEvent = null">✕</span>
+    </div>
+    <div class="detail-body" v-if="detailEvent">
+      <div class="detail-section">
+        <h4>Basic Info</h4>
+        <div class="detail-kv">
+          <span class="k">Syscall</span><span class="v name">{{ detailEvent.name }} (#{{ detailEvent.nr }})</span>
+          <span class="k">PID</span><span class="v pid-cell" @click.stop="openPidFromDetail(detailEvent)">{{ detailEvent.pid }}</span>
+          <span class="k">TID</span><span class="v">{{ detailEvent.tid || '-' }}</span>
+          <span class="k">UID</span><span class="v">{{ detailEvent.uid }}</span>
+          <span class="k">Process</span><span class="v comm">{{ detailEvent.comm }}</span>
+          <span class="k">Timestamp</span><span class="v mono">{{ detailEvent.timestamp_ns ? (detailEvent.timestamp_ns / 1e9).toFixed(6) + 's' : '-' }}</span>
+        </div>
+      </div>
+
+      <div class="detail-section" v-if="detailEvent.args">
+        <h4>Arguments</h4>
+        <pre style="background:var(--bg);padding:10px;border-radius:4px;overflow-x:auto;white-space:pre-wrap;font-size:12px;color:var(--text);border:1px solid var(--border);">{{ detailEvent.args }}</pre>
+      </div>
+
+      <div class="detail-section" v-if="detailEvent.fp_chain">
+        <h4>Call Chain (FP)</h4>
+        <pre style="background:var(--bg);padding:10px;border-radius:4px;overflow-x:auto;white-space:pre-wrap;font-size:12px;color:var(--cyan);border:1px solid var(--border);">{{ detailEvent.fp_chain }}</pre>
+      </div>
+
+      <div class="detail-section" v-if="detailEvent.has_retval">
+        <h4>Return Value</h4>
+        <div class="detail-kv">
+          <span class="k">retval</span><span class="v" :class="detailEvent.retval < 0 ? 'retval-err' : 'retval-ok'">{{ detailEvent.retval }} (0x{{ (detailEvent.retval >>> 0).toString(16) }})</span>
+          <span class="k">Duration</span><span class="v">{{ detailEvent.duration_ns ? (detailEvent.duration_ns / 1000).toFixed(2) + ' μs (' + (detailEvent.duration_ns / 1e6).toFixed(3) + ' ms)' : '-' }}</span>
+        </div>
+      </div>
+
+      <div class="detail-section" v-if="detailEvent.bt_depth > 0">
+        <h4>Backtrace ({{ detailEvent.bt_depth }} frames)</h4>
+        <ul class="backtrace-list">
+          <li v-for="(addr, i) in parseBacktrace(detailEvent)" :key="i">
+            #{{ i }} 0x{{ addr }}
+          </li>
+        </ul>
+      </div>
+
+      <div class="detail-section" v-if="resolvedBacktrace && resolvedBacktrace.length">
+        <h4>Resolved Backtrace (maps)</h4>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;">
+          <button class="secondary" @click="refreshResolvedBacktrace()">Refresh</button>
+          <button class="secondary" @click="resolveSymbolsForBacktrace()" :disabled="resolvingSymbols">Resolve symbols</button>
+          <button class="secondary" v-if="detailEvent && detailEvent.pid" @click="mapsPid=detailEvent.pid; mapsFocusAddr=(detailEvent.a0||null); tab='maps'; loadMaps()">Load maps</button>
+        </div>
+        <pre style="background:var(--bg);padding:10px;border-radius:4px;overflow-x:auto;white-space:pre-wrap;font-size:12px;color:var(--text);border:1px solid var(--border);">{{
+          resolvedBacktrace.map((l) => {
+            if (!l.module) return (l.addrHex + ' → ' + (l.text || 'unmapped'));
+            const base = l.addrHex + ' → ' + l.module + ' + ' + l.offsetHex;
+            const sym = l.symbol ? ('  ' + (l.symbol.function || '') + (l.symbol.fileline ? ('  ' + l.symbol.fileline) : '')) : '';
+            return base + sym;
+          }).join('\n')
+        }}</pre>
+      </div>
+
+      <div class="detail-section" v-if="detailEvent && detailEvent.name && (detailEvent.name.includes('mmap') || detailEvent.name.includes('mprotect'))">
+        <h4>Maps Link</h4>
+        <button class="secondary" @click="mapsPid=detailEvent.pid; mapsFocusAddr=(detailEvent.a0||null); tab='maps'; loadMaps()">Jump to Maps (a0)</button>
+      </div>
+
+      <div class="detail-section" v-if="cloneResolved && cloneResolved.addrHex">
+        <h4>Clone Target</h4>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;">
+          <button class="secondary" @click="refreshCloneResolved()">Refresh</button>
+          <button class="secondary" @click="mapsPid=detailEvent.pid; mapsJumpAddr=cloneResolved.addrHex; tab='maps'; jumpToAddr()">Jump to Maps</button>
+        </div>
+        <pre style="background:var(--bg);padding:10px;border-radius:4px;overflow-x:auto;white-space:pre-wrap;font-size:12px;color:var(--text);border:1px solid var(--border);">{{
+          cloneResolved.module
+            ? (cloneResolved.addrHex + ' → ' + cloneResolved.module + ' + ' + cloneResolved.offsetHex + (cloneResolved.path ? ('  ' + cloneResolved.path) : ''))
+            : (cloneResolved.addrHex + ' → unmapped')
+        }}</pre>
+      </div>
+
+      <div class="detail-section" v-if="detailEvent.vma_info">
+        <h4>VMA Info</h4>
+        <pre style="background:var(--bg);padding:10px;border-radius:4px;font-size:12px;color:var(--cyan);border:1px solid var(--border);">{{ detailEvent.vma_info }}</pre>
+      </div>
+
+      <div class="detail-section" v-if="detailEvent.antidebug">
+        <h4>⚠️ Anti-Debug Detection</h4>
+        <div style="background:rgba(248,81,73,0.15);padding:10px;border-radius:4px;border:1px solid rgba(248,81,73,0.3);color:var(--red);">
+          This syscall is flagged as potential anti-debug/anti-tampering behavior.
+        </div>
+      </div>
+
+      <div class="detail-section">
+        <h4>Raw JSON</h4>
+        <pre style="background:var(--bg);padding:10px;border-radius:4px;overflow-x:auto;font-size:11px;color:var(--text2);max-height:300px;overflow-y:auto;border:1px solid var(--border);">{{ JSON.stringify(detailEvent, null, 2) }}</pre>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+const { createApp, ref, reactive, computed, onMounted, nextTick, watch } = Vue;
+
+createApp({
+  setup() {
+    // ─── State ───
+    const tab = ref('events');
+    const bridgeConnected = ref(false);
+    const stats = reactive({ total_events: 0, unique_pids: 0, unique_syscalls: 0, antidebug_count: 0, top_syscalls: {}, top_pids: {} });
+
+    // Events
+    const events = ref([]);
+    const searchQuery = ref('');
+    const searchPid = ref(null);
+    const searchTid = ref(null);
+    const searchComm = ref('');
+    const searchNr = ref(null);
+    const searchAntidebug = ref(false);
+    const searchHasRetval = ref(false);
+    const searchOffset = ref(0);
+    const searchLimit = ref(100);
+    const MAX_EVENTS = 20000;
+    const searchResult = reactive({ total: 0, indices: null, tid_stats: [] });
+
+    // Detail
+    const detailEvent = ref(null);
+    const resolvedBacktrace = ref([]);
+    const resolvingSymbols = ref(false);
+    const cloneResolved = ref(null);
+
+    const mapsPid = ref(null);
+    const mapsText = ref('');
+    const mapsErr = ref('');
+    const mapsJumpAddr = ref('');
+    const mapsFilterPath = ref('');
+    const mapsFilterPerm = ref('');
+    const mapsFilterAddr = ref('');
+    const mapsFocusAddr = ref(null);
+    const mapsSelectedStart = ref(null);
+    const mapsBlinkStart = ref(null);
+    let mapsBlinkTimer = null;
+    const mapsEntries = ref([]);
+    const mapsCache = new Map();
+    const symbolFiles = ref([]);
+    const symbolCache = new Map();
+    let mapsChart = null;
+
+    const stringsQ = ref('');
+    const stringsScan = ref(20000);
+    const stringsMaxItems = ref(2000);
+    const stringsItems = ref([]);
+    const stringsTotalUnique = ref(0);
+    const stringsLoading = ref(false);
+
+    // PIDs
+    const pids = ref([]);
+    const filteredPids = ref([]);
+    const pidSearch = ref('');
+    const selectedPid = ref(null);
+    const selectedPidComm = ref('');
+    const pidEvents = ref([]);
+    const pidEventsOffset = ref(0);
+    const pidEventsTotal = ref(0);
+
+    // Timeline
+    const timelinePid = ref(null);
+
+    // Upload
+    const uploadStatus = ref('');
+
+    // Rate tracking
+    const rateHistory = ref([]);
+    let lastTotal = 0;
+
+    // ─── Socket.IO ───
+    const socket = io({ transports: ['websocket'], upgrade: false });
+    let rpcSeq = 1;
+    const rpcWait = new Map();
+
+    socket.on('rpc_result', (msg) => {
+      const cb = rpcWait.get(msg.id);
+      if (cb) {
+        rpcWait.delete(msg.id);
+        cb(msg);
+      }
+    });
+
+    function rpc(method, params) {
+      const id = rpcSeq++;
+      return new Promise((resolve) => {
+        rpcWait.set(id, resolve);
+        socket.emit('rpc', { id, method, params });
+        setTimeout(() => {
+          if (rpcWait.has(id)) {
+            rpcWait.delete(id);
+            resolve({ id, ok: false, error: 'timeout' });
+          }
+        }, 8000);
+      });
+    }
+
+    socket.on('bridge_status', (data) => {
+      bridgeConnected.value = data.connected;
+    });
+
+    socket.on('stats_update', (data) => {
+      Object.assign(stats, data);
+
+      // Track rate
+      const now = new Date().toLocaleTimeString();
+      const rate = stats.total_events - lastTotal;
+      lastTotal = stats.total_events;
+      rateHistory.value.push({ time: now, rate });
+      if (rateHistory.value.length > 60) rateHistory.value.shift();
+    });
+
+    socket.on('new_event', (data) => {
+      // If in live mode (no search filter), append to events
+      if (!searchQuery.value && !searchPid.value && !searchComm.value && !searchNr.value && !searchAntidebug.value) {
+        events.value.push(data.event);
+        if (events.value.length > MAX_EVENTS) {
+          events.value = events.value.slice(-MAX_EVENTS);
+          searchOffset.value = Math.max(0, data.idx - MAX_EVENTS + 1);
+        }
+      }
+    });
+
+    // ─── API calls ───
+    async function doSearch() {
+      const params = new URLSearchParams();
+      const payload = {};
+      if (searchQuery.value) payload.q = searchQuery.value;
+      if (searchPid.value) payload.pid = searchPid.value;
+      if (searchTid.value) payload.tid = searchTid.value;
+      if (searchComm.value) payload.comm = searchComm.value;
+      if (searchNr.value) payload.nr = searchNr.value;
+      if (searchAntidebug.value) payload.antidebug = true;
+      if (searchHasRetval.value) payload.has_retval = true;
+      payload.offset = searchOffset.value;
+      payload.limit = Math.min(MAX_EVENTS, searchLimit.value);
+
+      const resp = await rpc('search', payload);
+      const data = (resp && resp.ok) ? resp.data : { events: [], total: 0, indices: null, tid_stats: [] };
+      events.value = data.events;
+      searchResult.total = data.total;
+      searchResult.indices = data.indices;
+      searchResult.tid_stats = data.tid_stats || [];
+    }
+
+    function resetSearch() {
+      searchQuery.value = '';
+      searchPid.value = null;
+      searchTid.value = null;
+      searchComm.value = '';
+      searchNr.value = null;
+      searchAntidebug.value = false;
+      searchHasRetval.value = false;
+      searchOffset.value = 0;
+      searchResult.total = 0;
+      searchResult.indices = null;
+      events.value = [];
+      doSearch();
+    }
+
+    async function clearAll() {
+      await rpc('clear', {});
+      resetSearch();
+    }
+
+    async function stopApp() {
+      await rpc('app_cmd', { cmd: 'STOP' });
+    }
+
+    async function clearApp() {
+      await rpc('app_cmd', { cmd: 'CLEAR_EVENTS' });
+      await rpc('clear', {});
+      resetSearch();
+    }
+
+    async function clearAppHistory() {
+      await rpc('app_cmd', { cmd: 'CLEAR_HISTORY' });
+    }
+
+    async function loadMaps() {
+      mapsErr.value = '';
+      mapsText.value = '';
+      if (!mapsPid.value) return;
+      const resp = await rpc('maps', { pid: mapsPid.value });
+      const data = (resp && resp.ok) ? resp.data : { ok: false, error: 'failed' };
+      if (data.ok) {
+        mapsText.value = data.maps || '';
+        mapsCache.set(mapsPid.value, parseMaps(mapsText.value));
+        mapsSelectedStart.value = null;
+        renderMaps();
+        loadSymbolList();
+      } else {
+        mapsErr.value = data.error || 'failed';
+      }
+    }
+
+    function parseHexAddr(s) {
+      const t = String(s || '').trim().toLowerCase();
+      if (!t) return null;
+      const u = t.startsWith('0x') ? t.slice(2) : t;
+      const v = parseInt(u, 16);
+      if (Number.isNaN(v)) return null;
+      return v;
+    }
+
+    async function jumpToAddr() {
+      mapsErr.value = '';
+      const pid = mapsPid.value;
+      const addr = parseHexAddr(mapsJumpAddr.value);
+      if (!pid || addr === null) return;
+      if (!mapsText.value) {
+        await loadMaps();
+        if (!mapsText.value) return;
+      }
+      await ensureMapsForPid(pid);
+      const m = resolveAddrByMaps(pid, addr);
+      mapsFocusAddr.value = addr;
+      if (!m) {
+        mapsSelectedStart.value = null;
+        mapsErr.value = 'address not in any mapping: 0x' + addr.toString(16);
+        renderMaps();
+        return;
+      }
+      mapsSelectedStart.value = m.start;
+      mapsFilterPath.value = '';
+      mapsFilterPerm.value = '';
+      mapsFilterAddr.value = '';
+      renderMaps();
+      await nextTick();
+      try {
+        const table = document.getElementById('mapsMappingsTable');
+        const row = table ? table.querySelector(`tr[data-map-start="${m.start}"]`) : null;
+        if (row && row.scrollIntoView) row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      } catch (_) {}
+      mapsBlinkStart.value = m.start;
+      if (mapsBlinkTimer) clearTimeout(mapsBlinkTimer);
+      mapsBlinkTimer = setTimeout(() => { mapsBlinkStart.value = null; }, 3000);
+    }
+
+    async function loadStrings() {
+      stringsLoading.value = true;
+      try {
+        const resp = await rpc('strings_summary', {
+          q: stringsQ.value || null,
+          min_len: 5,
+          max_items: stringsMaxItems.value || 2000,
+          max_scan: stringsScan.value || 20000,
+        });
+        const data = (resp && resp.ok) ? resp.data : { ok: false };
+        if (data && data.ok) {
+          stringsItems.value = data.items || [];
+          stringsTotalUnique.value = data.total_unique || 0;
+        } else {
+          stringsItems.value = [];
+          stringsTotalUnique.value = 0;
+        }
+      } finally {
+        stringsLoading.value = false;
+      }
+    }
+
+    function searchFromString(s) {
+      searchQuery.value = s;
+      searchOffset.value = 0;
+      tab.value = 'events';
+      doSearch();
+    }
+
+    function parseMaps(text) {
+      const lines = (text || '').split('\n').map(s => s.trim()).filter(Boolean);
+      const out = [];
+      for (const ln of lines) {
+        const m = ln.match(/^([0-9a-fA-F]+)-([0-9a-fA-F]+)\s+([rwxps\-]{4})\s+([0-9a-fA-F]+)\s+(\S+)\s+(\d+)\s*(.*)$/);
+        if (!m) continue;
+        const start = parseInt(m[1], 16);
+        const end = parseInt(m[2], 16);
+        const perm = m[3];
+        const off = parseInt(m[4], 16);
+        const path = (m[7] || '').trim();
+        const anon = !path || path.startsWith('[');
+        const rwx = perm.includes('r') && perm.includes('w') && perm.includes('x');
+        const pathLow = path.toLowerCase();
+        const nonStd =
+          !!path && !pathLow.startsWith('/system/') && !pathLow.startsWith('/apex/') &&
+          !pathLow.startsWith('/vendor/') && !pathLow.startsWith('/product/') &&
+          !pathLow.startsWith('/data/app/') && !pathLow.startsWith('/data/') &&
+          !pathLow.startsWith('/dev/') && !pathLow.startsWith('/memfd:') && !pathLow.startsWith('memfd:');
+        const suspicious = (anon && rwx) || nonStd;
+        out.push({
+          start, end, perm, off, path,
+          anon, suspicious,
+          startHex: start.toString(16),
+          endHex: end.toString(16),
+          offHex: off.toString(16),
+        });
+      }
+      out.sort((a, b) => a.start - b.start);
+      return out;
+    }
+
+    function filterMaps(entries) {
+      let list = entries || [];
+      const p = (mapsFilterPath.value || '').trim().toLowerCase();
+      const perm = (mapsFilterPerm.value || '').trim();
+      const addrStr = (mapsFilterAddr.value || '').trim().toLowerCase();
+      let addr = null;
+      if (addrStr.startsWith('0x')) {
+        const v = parseInt(addrStr.slice(2), 16);
+        if (!Number.isNaN(v)) addr = v;
+      }
+      if (p) list = list.filter(e => (e.path || '').toLowerCase().includes(p));
+      if (perm) list = list.filter(e => e.perm.includes(perm.replace(/[^rwxps\-]/g, '')));
+      if (addr !== null) list = list.filter(e => e.start <= addr && addr < e.end);
+      return list;
+    }
+
+    function permColor(perm) {
+      const r = perm.includes('r');
+      const w = perm.includes('w');
+      const x = perm.includes('x');
+      if (r && w && x) return '#bc8cff';
+      if (x) return '#3fb950';
+      if (w) return '#f85149';
+      if (r) return '#58a6ff';
+      return '#8b949e';
+    }
+
+    function renderMaps() {
+      const pid = mapsPid.value;
+      if (!pid || !mapsText.value) return;
+      const all = mapsCache.get(pid) || parseMaps(mapsText.value);
+      mapsCache.set(pid, all);
+      const filtered = filterMaps(all);
+      mapsEntries.value = filtered;
+      if (mapsFocusAddr.value !== null && mapsSelectedStart.value === null) {
+        const mm = resolveAddrByMaps(pid, mapsFocusAddr.value);
+        if (mm) mapsSelectedStart.value = mm.start;
+      }
+      renderMapsChart(all, filtered);
+    }
+
+    function renderMapsChart(all, filtered) {
+      const el = document.getElementById('mapsChart');
+      if (!el) return;
+      if (!mapsChart) mapsChart = echarts.init(el, 'dark');
+      const min = all.length ? all[0].start : 0;
+      const max = all.length ? all[all.length - 1].end : 1;
+      const focus = mapsFocusAddr.value;
+      const data = filtered.map(e => ({
+        value: [e.start, e.end],
+        perm: e.perm,
+        path: e.path,
+        suspicious: e.suspicious,
+      }));
+      mapsChart.setOption({
+        backgroundColor: 'transparent',
+        tooltip: {
+          trigger: 'item',
+          formatter: p => {
+            const d = p.data;
+            const s = '0x' + d.value[0].toString(16);
+            const e = '0x' + d.value[1].toString(16);
+            return `${s} - ${e}<br/>${d.perm}<br/>${(d.path || '-')}${d.suspicious ? '<br/><span style="color:#f85149">SUS</span>' : ''}`;
+          }
+        },
+        xAxis: { type: 'value', min, max, axisLabel: { formatter: v => '0x' + Number(v).toString(16), color: '#8b949e' }, splitLine: { show: false } },
+        yAxis: { type: 'category', data: ['mem'], axisLabel: { color: '#8b949e' } },
+        dataZoom: [{ type: 'inside' }, { type: 'slider', bottom: 10 }],
+        series: [{
+          type: 'custom',
+          renderItem: (params, api) => {
+            const start = api.value(0);
+            const end = api.value(1);
+            const y = api.coord([start, 0])[1];
+            const x0 = api.coord([start, 0])[0];
+            const x1 = api.coord([end, 0])[0];
+            const h = api.size([0, 1])[1] * 0.6;
+            const perm = params.data.perm || '----';
+            const col = permColor(perm);
+            const isSus = !!params.data.suspicious;
+            return {
+              type: 'rect',
+              shape: { x: x0, y: y - h / 2, width: Math.max(1, x1 - x0), height: h },
+              style: { fill: col, opacity: isSus ? 0.95 : 0.7, stroke: isSus ? '#f85149' : 'transparent', lineWidth: isSus ? 1 : 0 }
+            };
+          },
+          encode: { x: [0, 1], y: 0 },
+          data,
+        }],
+      }, true);
+
+      if (focus && typeof focus === 'number') {
+        mapsChart.dispatchAction({ type: 'dataZoom', startValue: Math.max(min, focus - (max - min) * 0.02), endValue: Math.min(max, focus + (max - min) * 0.02) });
+      }
+      mapsChart.resize();
+    }
+
+    async function ensureMapsForPid(pid) {
+      if (!pid) return null;
+      if (mapsCache.has(pid)) return mapsCache.get(pid);
+      const resp = await rpc('maps', { pid });
+      const data = (resp && resp.ok) ? resp.data : { ok: false };
+      if (!data.ok) return null;
+      const parsed = parseMaps(data.maps || '');
+      mapsCache.set(pid, parsed);
+      return parsed;
+    }
+
+    function resolveAddrByMaps(pid, addr) {
+      const maps = mapsCache.get(pid);
+      if (!maps || addr == null) return null;
+      const a = Number(addr);
+      if (Number.isNaN(a)) return null;
+      let lo = 0, hi = maps.length - 1;
+      while (lo <= hi) {
+        const mid = (lo + hi) >> 1;
+        const m = maps[mid];
+        if (a < m.start) hi = mid - 1;
+        else if (a >= m.end) lo = mid + 1;
+        else return m;
+      }
+      return null;
+    }
+
+    async function refreshCloneResolved() {
+      const ev = detailEvent.value;
+      cloneResolved.value = null;
+      if (!ev || !ev.pid) return;
+      const addr = ev.clone_fn;
+      if (!addr || typeof addr !== 'number') return;
+      await ensureMapsForPid(ev.pid);
+      const m = resolveAddrByMaps(ev.pid, addr);
+      if (!m) {
+        cloneResolved.value = { addrHex: '0x' + addr.toString(16) };
+        return;
+      }
+      const baseName = (m.path || '[anon]').split('/').pop();
+      const off = addr - m.start;
+      cloneResolved.value = {
+        addrHex: '0x' + addr.toString(16),
+        module: baseName,
+        offsetHex: '0x' + off.toString(16),
+        path: m.path || '',
+        perm: m.perm,
+        suspicious: m.suspicious,
+      };
+    }
+
+    async function refreshResolvedBacktrace() {
+      const ev = detailEvent.value;
+      resolvedBacktrace.value = [];
+      if (!ev || !ev.pid || !ev.backtrace || !Array.isArray(ev.backtrace)) return;
+      await ensureMapsForPid(ev.pid);
+      const out = [];
+      for (const x of ev.backtrace.slice(0, 24)) {
+        const addr = typeof x === 'number' ? x : parseInt(String(x).replace(/^0x/, ''), 16);
+        if (!addr) continue;
+        const m = resolveAddrByMaps(ev.pid, addr);
+        if (!m) {
+          out.push({ addrHex: '0x' + addr.toString(16), text: 'unmapped' });
+          continue;
+        }
+        const baseName = (m.path || '[anon]').split('/').pop();
+        const off = addr - m.start;
+        const offHex = '0x' + off.toString(16);
+        const key = baseName + '|' + offHex;
+        const sym = symbolCache.get(key) || null;
+        out.push({
+          addrHex: '0x' + addr.toString(16),
+          module: baseName,
+          offsetHex: offHex,
+          perm: m.perm,
+          path: m.path || '',
+          suspicious: m.suspicious,
+          symbol: sym,
+        });
+      }
+      resolvedBacktrace.value = out;
+    }
+
+    async function resolveSymbolsForBacktrace() {
+      if (resolvingSymbols.value) return;
+      resolvingSymbols.value = true;
+      try {
+        for (const l of resolvedBacktrace.value) {
+          if (!l.module || !l.offsetHex) continue;
+          const key = l.module + '|' + l.offsetHex;
+          if (symbolCache.has(key)) continue;
+          const resp = await rpc('symbol_resolve', { module: l.module, offset_hex: l.offsetHex });
+          const data = (resp && resp.ok) ? resp.data : { ok: false };
+          if (data && data.ok && data.result) symbolCache.set(key, data.result);
+        }
+      } finally {
+        resolvingSymbols.value = false;
+        await refreshResolvedBacktrace();
+      }
+    }
+
+    async function loadSymbolList() {
+      const resp = await rpc('symbol_list', {});
+      const data = (resp && resp.ok) ? resp.data : { ok: false };
+      if (data && data.ok && Array.isArray(data.files)) symbolFiles.value = data.files;
+    }
+
+    async function uploadSymbol(e) {
+      const file = e.target.files[0];
+      if (!file) return;
+      const fd = new FormData();
+      fd.append('file', file);
+      await fetch('/api/symbol/upload', { method: 'POST', body: fd });
+      await loadSymbolList();
+      e.target.value = '';
+    }
+
+    function prevPage() {
+      searchOffset.value = Math.max(0, searchOffset.value - searchLimit.value);
+      doSearch();
+    }
+    function nextPage() {
+      searchOffset.value += searchLimit.value;
+      doSearch();
+    }
+
+    function filterByPid(pid) {
+      searchPid.value = pid;
+      searchOffset.value = 0;
+      doSearch();
+    }
+
+    function showDetail(ev, idx) {
+      detailEvent.value = ev;
+      refreshResolvedBacktrace();
+      refreshCloneResolved();
+      const name = (ev && ev.name) ? String(ev.name).toLowerCase() : '';
+      if (name.includes('mmap') || name.includes('mprotect')) {
+        mapsPid.value = ev.pid || null;
+        mapsFocusAddr.value = ev.a0 || null;
+        mapsSelectedStart.value = null;
+        tab.value = 'maps';
+        loadMaps();
+      }
+    }
+
+    function syscallClass(ev) {
+      const name = (ev.name || '').toLowerCase();
+      if (name.includes('ptrace') || name.includes('execve') || name.includes('clone')) return 'sc-proc';
+      if (name.includes('socket') || name.includes('connect') || name.includes('sendto') || name.includes('sendmsg') || name.includes('recvfrom') || name.includes('recvmsg')) return 'sc-net';
+      if (name.includes('openat') || name === 'open' || name.includes('read') || name.includes('write')) return 'sc-file';
+      if (name.includes('faccessat') || name.includes('uname')) return 'sc-env';
+      return '';
+    }
+
+    function syscallTag(ev) {
+      const c = syscallClass(ev);
+      if (c === 'sc-proc') return { text: 'PROC', cls: 'badge-proc' };
+      if (c === 'sc-net') return { text: 'NET', cls: 'badge-net' };
+      if (c === 'sc-file') return { text: 'FILE', cls: 'badge-file' };
+      if (c === 'sc-env') return { text: 'ENV', cls: 'badge-env' };
+      return null;
+    }
+
+    function parseBacktrace(ev) {
+      if (!ev.backtrace) return [];
+      if (typeof ev.backtrace === 'string') {
+        return ev.backtrace.split(',').map(s => s.trim());
+      }
+      if (Array.isArray(ev.backtrace)) {
+        return ev.backtrace.map(a => typeof a === 'number' ? a.toString(16) : a);
+      }
+      return [];
+    }
+
+    // ─── PID Analysis ───
+    async function loadPids() {
+      const resp = await rpc('get_pids', {});
+      pids.value = (resp && resp.ok) ? resp.data : [];
+      filterPids();
+    }
+
+    function filterPids() {
+      const q = pidSearch.value.toLowerCase();
+      if (!q) {
+        filteredPids.value = pids.value;
+      } else {
+        filteredPids.value = pids.value.filter(p =>
+          String(p.pid).includes(q) || (p.comm || '').toLowerCase().includes(q)
+        );
+      }
+    }
+
+    async function selectPid(p) {
+      selectedPid.value = p.pid;
+      selectedPidComm.value = p.comm;
+      pidEventsOffset.value = 0;
+      await loadPidEvents();
+      await nextTick();
+      renderPidTimeline();
+    }
+
+    async function openPidFromDetail(ev) {
+      if (!ev || !ev.pid) return;
+      tab.value = 'pids';
+      await loadPids();
+      await selectPid({ pid: ev.pid, comm: ev.comm || '' });
+    }
+
+    const threadPid = ref(null);
+    const threadResult = ref(null);
+    async function loadThreads() {
+      if (!threadPid.value) return;
+      const resp = await rpc('thread_analyze', { pid: threadPid.value });
+      threadResult.value = (resp && resp.ok) ? resp.data : null;
+    }
+
+    async function loadPidEvents() {
+      const resp = await rpc('pid_events', { pid: selectedPid.value, offset: pidEventsOffset.value, limit: 200 });
+      const data = (resp && resp.ok) ? resp.data : { events: [], total: 0 };
+      pidEvents.value = data.events;
+      pidEventsTotal.value = data.total;
+    }
+
+    async function renderPidTimeline() {
+      const resp = await rpc('pid_timeline', { pid: selectedPid.value });
+      const data = (resp && resp.ok) ? resp.data : [];
+      const el = document.getElementById('pidTimelineChart');
+      if (!el) return;
+      const chart = echarts.init(el, 'dark');
+
+      const baseTs = data.length > 0 ? data[0].ts : 0;
+      const scatterData = data.map(d => [
+        ((d.ts - baseTs) / 1e6).toFixed(2),
+        d.nr,
+        d.name,
+        d.duration ? (d.duration / 1000).toFixed(1) : '0',
+        d.antidebug ? 1 : 0,
+      ]);
+
+      chart.setOption({
+        backgroundColor: 'transparent',
+        tooltip: {
+          trigger: 'item',
+          formatter: p => {
+            const d = p.data;
+            return 'Time: ' + d[0] + 'ms<br>Syscall: ' + d[2] + ' (#' + d[1] + ')<br>Duration: ' + d[3] + 'μs' + (d[4] ? '<br><b style="color:#f85149">ANTI-DEBUG</b>' : '');
+          }
+        },
+        xAxis: { type: 'value', name: 'Time (ms)', nameTextStyle: { color: '#8b949e' }, axisLabel: { color: '#8b949e' }, splitLine: { lineStyle: { color: '#21262d' } } },
+        yAxis: { type: 'value', name: 'Syscall NR', nameTextStyle: { color: '#8b949e' }, axisLabel: { color: '#8b949e' }, splitLine: { lineStyle: { color: '#21262d' } } },
+        series: [{
+          type: 'scatter',
+          symbolSize: d => d[4] ? 10 : 5,
+          data: scatterData,
+          itemStyle: { color: d => d.data[4] ? '#f85149' : '#58a6ff' },
+        }]
+      });
+      chart.resize();
+    }
+
+    // ─── Charts ───
+    function renderCharts() {
+      nextTick(() => {
+        // Syscall bar chart
+        const barEl = document.getElementById('syscallBarChart');
+        if (barEl) {
+          const chart = echarts.init(barEl, 'dark');
+          const names = Object.keys(stats.top_syscalls || {});
+          const values = Object.values(stats.top_syscalls || {});
+          chart.setOption({
+            backgroundColor: 'transparent',
+            tooltip: { trigger: 'axis' },
+            xAxis: { type: 'category', data: names, axisLabel: { rotate: 45, color: '#8b949e', fontSize: 10 }, splitLine: { show: false } },
+            yAxis: { type: 'value', axisLabel: { color: '#8b949e' }, splitLine: { lineStyle: { color: '#21262d' } } },
+            series: [{ type: 'bar', data: values, itemStyle: { color: '#3fb950' } }],
+            grid: { bottom: 80 },
+          });
+          chart.resize();
+        }
+
+        // Pie chart
+        const pieEl = document.getElementById('syscallPieChart');
+        if (pieEl) {
+          const chart = echarts.init(pieEl, 'dark');
+          const data = Object.entries(stats.top_syscalls || {}).map(([n, v]) => ({ name: n, value: v }));
+          chart.setOption({
+            backgroundColor: 'transparent',
+            tooltip: { trigger: 'item', formatter: '{b}: {c} ({d}%)' },
+            series: [{ type: 'pie', radius: ['35%', '65%'], data, label: { color: '#8b949e', fontSize: 10 }, itemStyle: { borderColor: '#161b22', borderWidth: 1 } }],
+          });
+          chart.resize();
+        }
+
+        // PID bar chart
+        const pidEl = document.getElementById('pidBarChart');
+        if (pidEl) {
+          const chart = echarts.init(pidEl, 'dark');
+          const entries = Object.entries(stats.top_pids || {}).sort((a, b) => b[1] - a[1]).slice(0, 20);
+          chart.setOption({
+            backgroundColor: 'transparent',
+            tooltip: { trigger: 'axis' },
+            xAxis: { type: 'category', data: entries.map(e => 'PID ' + e[0]), axisLabel: { rotate: 45, color: '#8b949e', fontSize: 10 }, splitLine: { show: false } },
+            yAxis: { type: 'value', axisLabel: { color: '#8b949e' }, splitLine: { lineStyle: { color: '#21262d' } } },
+            series: [{ type: 'bar', data: entries.map(e => e[1]), itemStyle: { color: '#d29922' } }],
+            grid: { bottom: 80 },
+          });
+          chart.resize();
+        }
+
+        // Rate chart
+        const rateEl = document.getElementById('rateChart');
+        if (rateEl) {
+          const chart = echarts.init(rateEl, 'dark');
+          chart.setOption({
+            backgroundColor: 'transparent',
+            tooltip: { trigger: 'axis' },
+            xAxis: { type: 'category', data: rateHistory.value.map(r => r.time), axisLabel: { color: '#8b949e', fontSize: 10 }, splitLine: { show: false } },
+            yAxis: { type: 'value', axisLabel: { color: '#8b949e' }, splitLine: { lineStyle: { color: '#21262d' } } },
+            series: [{ type: 'line', data: rateHistory.value.map(r => r.rate), smooth: true, areaStyle: { opacity: 0.2 }, lineStyle: { color: '#58a6ff' }, itemStyle: { color: '#58a6ff' } }],
+          });
+          chart.resize();
+        }
+      });
+    }
+
+    // ─── Timeline ───
+    async function loadTimeline() {
+      if (!timelinePid.value) return;
+      const resp = await fetch('/api/pid/' + timelinePid.value + '/timeline');
+      const data = await resp.json();
+      const el = document.getElementById('globalTimelineChart');
+      if (!el) return;
+      const chart = echarts.init(el, 'dark');
+
+      const baseTs = data.length > 0 ? data[0].ts : 0;
+
+      // Group by syscall name for color coding
+      const groups = {};
+      data.forEach(d => {
+        if (!groups[d.name]) groups[d.name] = [];
+        groups[d.name].push([
+          ((d.ts - baseTs) / 1e6).toFixed(2),
+          d.duration ? Math.log10(d.duration + 1) : 0,
+          d.name,
+          d.nr,
+          d.duration ? (d.duration / 1000).toFixed(1) : '0',
+          d.antidebug ? 1 : 0,
+          d.retval,
+          d.tid,
+        ]);
+      });
+
+      const series = Object.entries(groups).map(([name, pts]) => ({
+        name,
+        type: 'scatter',
+        symbolSize: d => d[5] ? 12 : 5,
+        data: pts,
+      }));
+
+      chart.setOption({
+        backgroundColor: 'transparent',
+        tooltip: {
+          trigger: 'item',
+          formatter: p => {
+            const d = p.data;
+            let s = '<b>' + d[2] + '</b> (#' + d[3] + ')<br>';
+            s += 'Time: ' + d[0] + 'ms<br>';
+            s += 'Duration: ' + d[4] + 'μs<br>';
+            s += 'TID: ' + d[7] + '<br>';
+            if (d[6] !== undefined && d[6] !== null) s += 'Return: ' + d[6] + '<br>';
+            if (d[5]) s += '<b style="color:#f85149">ANTI-DEBUG</b>';
+            return s;
+          }
+        },
+        legend: { type: 'scroll', bottom: 0, textStyle: { color: '#8b949e', fontSize: 10 } },
+        xAxis: { type: 'value', name: 'Time (ms)', nameTextStyle: { color: '#8b949e' }, axisLabel: { color: '#8b949e' }, splitLine: { lineStyle: { color: '#21262d' } } },
+        yAxis: { type: 'value', name: 'Duration (log10 ns)', nameTextStyle: { color: '#8b949e' }, axisLabel: { color: '#8b949e' }, splitLine: { lineStyle: { color: '#21262d' } } },
+        dataZoom: [{ type: 'inside' }, { type: 'slider', bottom: 30 }],
+        series,
+      });
+      chart.resize();
+    }
+
+    // ─── Export ───
+    function exportJsonl(pid) {
+      const url = pid ? '/api/export/jsonl?pid=' + pid : '/api/export/jsonl';
+      window.open(url);
+    }
+    function exportCsv(pid) {
+      const url = pid ? '/api/export/csv?pid=' + pid : '/api/export/csv';
+      window.open(url);
+    }
+
+    // ─── Upload ───
+    async function uploadFile(e) {
+      const file = e.target.files[0];
+      if (!file) return;
+      const fd = new FormData();
+      fd.append('file', file);
+      uploadStatus.value = 'Uploading...';
+      const resp = await fetch('/api/load', { method: 'POST', body: fd });
+      const data = await resp.json();
+      uploadStatus.value = 'Loaded ' + data.loaded + ' events (total: ' + data.total + ')';
+      socket.emit('request_stats');
+    }
+
+    function handleDrop(e) {
+      const file = e.dataTransfer.files[0];
+      if (file) {
+        const fd = new FormData();
+        fd.append('file', file);
+        fetch('/api/load', { method: 'POST', body: fd }).then(r => r.json()).then(data => {
+          uploadStatus.value = 'Loaded ' + data.loaded + ' events (total: ' + data.total + ')';
+          socket.emit('request_stats');
+        });
+      }
+    }
+
+    // ─── Init ───
+    onMounted(() => {
+      doSearch();
+    });
+
+    return {
+      tab, bridgeConnected, stats,
+      events, searchQuery, searchPid, searchTid, searchComm, searchNr, searchAntidebug, searchHasRetval,
+      searchOffset, searchLimit, searchResult,
+      detailEvent, resolvedBacktrace, resolvingSymbols, cloneResolved,
+      doSearch, resetSearch, prevPage, nextPage, filterByPid, showDetail,
+      syscallClass, syscallTag, parseBacktrace,
+      refreshResolvedBacktrace, resolveSymbolsForBacktrace, refreshCloneResolved,
+      pids, filteredPids, pidSearch, selectedPid, selectedPidComm, pidEvents, pidEventsOffset, pidEventsTotal,
+      loadPids, filterPids, selectPid, loadPidEvents, openPidFromDetail,
+      timelinePid, loadTimeline,
+      renderCharts, rateHistory,
+      uploadStatus, uploadFile, handleDrop,
+      exportJsonl, exportCsv, clearAll, stopApp, clearApp, clearAppHistory,
+      threadPid, threadResult, loadThreads,
+      mapsPid, mapsText, mapsErr, mapsEntries, mapsJumpAddr, mapsSelectedStart, mapsBlinkStart, mapsFilterPath, mapsFilterPerm, mapsFilterAddr, mapsFocusAddr,
+      loadMaps, jumpToAddr, renderMaps,
+      symbolFiles, loadSymbolList, uploadSymbol,
+      stringsQ, stringsScan, stringsMaxItems, stringsItems, stringsTotalUnique, stringsLoading,
+      loadStrings, searchFromString,
+    };
+  }
+}).mount('#app');
+</script>
+</body>
+</html>
